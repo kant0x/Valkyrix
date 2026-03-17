@@ -53,9 +53,9 @@
 ### Phase 3 — Units, Buildings & Combat
 
 - [x] **UNIT-01**: Каждый тип юнита имеет здоровье, скорость, роль (задокументировано)
-- [ ] **UNIT-02**: Юниты спавнятся на `spawn`, движутся по `paths`, атакуют цитадель
+- [x] **UNIT-02**: Юниты спавнятся на `spawn`, движутся по `paths`, атакуют цитадель
 - [ ] **BLDG-01**: Здания размещаются в `zones`, каждое имеет механику баффа или атаки
-- [ ] **BLDG-02**: Волны врагов запускаются по таймеру/триггеру
+- [x] **BLDG-02**: Волны врагов запускаются по таймеру/триггеру
 - [ ] **GAME-01**: Игрок может проиграть (цитадель захвачена) или выиграть раунд
 - [ ] **GAME-02**: In-game HUD показывает состояние игры (волны, здоровье, ресурсы)
 
@@ -112,9 +112,9 @@
 | NET-02 | Phase 2 | Complete |
 | NET-03 | Phase 2 | Complete |
 | UNIT-01 | Phase 3 | Complete |
-| UNIT-02 | Phase 3 | Pending |
+| UNIT-02 | Phase 3 | Complete |
 | BLDG-01 | Phase 3 | Pending |
-| BLDG-02 | Phase 3 | Pending |
+| BLDG-02 | Phase 3 | Complete |
 | GAME-01 | Phase 3 | Pending |
 | GAME-02 | Phase 3 | Pending |
 | BOSS-01 | Phase 4 | Pending |
