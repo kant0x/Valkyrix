@@ -14,6 +14,14 @@ import { WalletSplashScreen } from './screens/WalletSplashScreen';
 import { MainMenuScreen } from './screens/MainMenuScreen';
 import { EscMenuOverlay } from './screens/EscMenuOverlay';
 import { HudOverlay } from './screens/HudOverlay';
+import { createGameState } from './game/GameState';
+import { WaveController } from './game/WaveController';
+import { UnitSystem } from './game/UnitSystem';
+import { BuildingSystem, canvasClickToTile } from './game/BuildingSystem';
+import { ProjectileSystem } from './game/ProjectileSystem';
+import { CombatSystem } from './game/CombatSystem';
+import { GameRenderer } from './game/GameRenderer';
+import type { GameState } from './game/game.types';
 
 type LayerName = 'ground' | 'paths' | 'cam' | 'zones' | 'decor' | 'citadel' | 'spawn';
 
@@ -151,6 +159,20 @@ let runtime: RuntimeState = {
     images: new Map<string, ImageEntry>(),
 };
 
+// Phase 3 game system references — set per GameScreen.mount(), cleared on unmount
+let gameState: GameState | null = null;
+let waveController: WaveController | null = null;
+let unitSystem: UnitSystem | null = null;
+let buildingSystem: BuildingSystem | null = null;
+let projectileSystem: ProjectileSystem | null = null;
+let combatSystem: CombatSystem | null = null;
+let gameRenderer: GameRenderer | null = null;
+let winLossShown = false;
+let selectedTowerType: 'attack' | 'buff' | null = null;
+let towerClickHandler: ((e: MouseEvent) => void) | null = null;
+// HUD reference for Phase 3 live data updates (set by GameScreen.mount, cleared on unmount)
+let gameScreenHudRef: HudOverlay | null = null;
+
 class GameScreen {
     private escMenu: EscMenuOverlay | null = null;
     private hud: HudOverlay | null = null;
@@ -236,6 +258,53 @@ class GameScreen {
 
         this.hud = new HudOverlay();
         this.hud.mount(container);
+        gameScreenHudRef = this.hud;
+
+        // Add tower selection buttons to the HUD container (Phase 3)
+        const btnAttack = document.createElement('button');
+        btnAttack.id = 'btn-attack-tower';
+        btnAttack.textContent = 'Attack Tower (50\u26A1)';
+        btnAttack.style.cssText = 'position:absolute;bottom:180px;left:14px;padding:8px 14px;background:#c0392b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;z-index:100;';
+        container.appendChild(btnAttack);
+
+        const btnBuff = document.createElement('button');
+        btnBuff.id = 'btn-buff-tower';
+        btnBuff.textContent = 'Buff Tower (40\u26A1)';
+        btnBuff.style.cssText = 'position:absolute;bottom:180px;left:180px;padding:8px 14px;background:#2980b9;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;z-index:100;';
+        container.appendChild(btnBuff);
+
+        selectedTowerType = null;
+
+        btnAttack.addEventListener('click', () => {
+            selectedTowerType = selectedTowerType === 'attack' ? null : 'attack';
+            btnAttack.style.outline = selectedTowerType === 'attack' ? '2px solid #fff' : 'none';
+            btnBuff.style.outline = 'none';
+        });
+
+        btnBuff.addEventListener('click', () => {
+            selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
+            btnBuff.style.outline = selectedTowerType === 'buff' ? '2px solid #fff' : 'none';
+            btnAttack.style.outline = 'none';
+        });
+
+        // Canvas click handler for tower placement
+        towerClickHandler = (e: MouseEvent) => {
+            if (!selectedTowerType || !gameState || !runtime.map) return;
+            const rect = canvas.getBoundingClientRect();
+            const map = runtime.map;
+            const zoneLayer = map.layers?.zones ?? [];
+            const { col, row } = canvasClickToTile(
+                e.clientX - rect.left,
+                e.clientY - rect.top,
+                canvas,
+                runtime.cameraCenter,
+                runtime.zoom,
+                map.tileWidth,
+                map.tileHeight,
+            );
+            buildingSystem?.placeBuilding(selectedTowerType, col, row, zoneLayer as number[], map.width, gameState);
+        };
+        canvas.addEventListener('click', towerClickHandler);
     }
 
     unmount(): void {
@@ -243,6 +312,29 @@ class GameScreen {
         this.hud?.unmount();
         this.escMenu = null;
         this.hud = null;
+
+        // Remove canvas click listener
+        if (towerClickHandler) {
+            canvas?.removeEventListener('click', towerClickHandler);
+            towerClickHandler = null;
+        }
+
+        // Remove tower buttons
+        document.getElementById('btn-attack-tower')?.remove();
+        document.getElementById('btn-buff-tower')?.remove();
+
+        // Clear Phase 3 game systems to allow GC
+        gameState = null;
+        waveController = null;
+        unitSystem = null;
+        buildingSystem = null;
+        projectileSystem = null;
+        combatSystem = null;
+        gameRenderer = null;
+        gameScreenHudRef = null;
+        winLossShown = false;
+        selectedTowerType = null;
+
         // Clear game DOM
         const container = document.getElementById('game-container');
         if (container) container.innerHTML = '';
@@ -532,6 +624,18 @@ async function loadMap(showReloadStatus = false): Promise<void> {
         runtime.images.clear();
         primeTileImages(parsed);
         runtime.status = showReloadStatus ? 'Map reloaded from active-map.json.' : 'Map loaded.';
+
+        // Initialize Phase 3 game systems after map is loaded
+        gameState = createGameState(parsed);
+        waveController = new WaveController();
+        unitSystem = new UnitSystem();
+        buildingSystem = new BuildingSystem();
+        projectileSystem = new ProjectileSystem();
+        combatSystem = new CombatSystem();
+        const arrowImg = new Image();
+        arrowImg.src = '/assets/projectiles/Arrow01.png';
+        gameRenderer = new GameRenderer(arrowImg);
+        winLossShown = false;
     } catch (error) {
         runtime.map = null;
         runtime.error = error instanceof Error ? error.message : String(error);
@@ -588,13 +692,44 @@ function update(dt: number): void {
     if (runtime.keys.has('ArrowDown') || runtime.keys.has('KeyS')) moveY += 1;
     if (runtime.keys.has('ArrowLeft') || runtime.keys.has('KeyA')) moveX -= 1;
     if (runtime.keys.has('ArrowRight') || runtime.keys.has('KeyD')) moveX += 1;
-    if (moveX === 0 && moveY === 0) return;
-    const len = Math.hypot(moveX, moveY) || 1;
-    const nextCenter = {
-        x: runtime.cameraCenter.x + (moveX / len) * MOVE_SPEED * dt,
-        y: runtime.cameraCenter.y + (moveY / len) * MOVE_SPEED * dt,
-    };
-    runtime.cameraCenter = clampCameraCenter(runtime.map, runtime.zoom, nextCenter);
+    if (moveX !== 0 || moveY !== 0) {
+        const len = Math.hypot(moveX, moveY) || 1;
+        const nextCenter = {
+            x: runtime.cameraCenter.x + (moveX / len) * MOVE_SPEED * dt,
+            y: runtime.cameraCenter.y + (moveY / len) * MOVE_SPEED * dt,
+        };
+        runtime.cameraCenter = clampCameraCenter(runtime.map, runtime.zoom, nextCenter);
+    }
+
+    // Phase 3: update game systems each frame (only when game is active)
+    if (gameState && gameState.phase === 'playing') {
+        waveController?.update(dt, gameState);
+        unitSystem?.update(dt, gameState);
+        buildingSystem?.update(dt, gameState);
+        projectileSystem?.update(dt, gameState);
+        combatSystem?.update(dt, gameState);
+    }
+
+    // HUD update with live game data
+    if (gameState) {
+        // Access hud via the module-level gameScreenRef
+        gameScreenHudRef?.update({
+            wave: gameState.waveNumber,
+            health: gameState.citadelHp,
+            citadelMaxHp: gameState.citadelMaxHp,
+            resources: gameState.resources,
+        });
+
+        // Win/loss detection — show overlay once
+        if (!winLossShown && gameState.phase === 'won') {
+            gameScreenHudRef?.showWinLossOverlay('won');
+            winLossShown = true;
+        }
+        if (!winLossShown && gameState.phase === 'lost') {
+            gameScreenHudRef?.showWinLossOverlay('lost');
+            winLossShown = true;
+        }
+    }
 }
 
 function render(): void {
@@ -622,6 +757,12 @@ function render(): void {
     drawWorldItems(runtime.map.obstacles, '#ffb56d');
     drawWorldItems(runtime.map.buildings, '#95f2af');
     drawCameraFocus(runtime.map);
+
+    // Phase 3: render game entities (units, buildings, projectiles) on top of tile map
+    if (gameState && gameRenderer) {
+        gameRenderer.render(ctx, gameState, runtime.cameraCenter, runtime.zoom);
+    }
+
     syncHud();
 }
 
