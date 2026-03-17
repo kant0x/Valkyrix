@@ -87,6 +87,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Map & Runtime Foundation | 1/1 | Complete | 2026-03-17 |
 | 2. Menu & Network Architecture | 6/6 | Complete   | 2026-03-17 |
-| 3. Units, Buildings & Combat | 3/6 | In Progress|  |
+| 3. Units, Buildings & Combat | 4/6 | In Progress|  |
 | 4. Boss — Negotiation Mechanic | 0/TBD | Not started | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |

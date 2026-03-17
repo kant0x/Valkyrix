@@ -56,7 +56,7 @@
 - [x] **UNIT-02**: Юниты спавнятся на `spawn`, движутся по `paths`, атакуют цитадель
 - [x] **BLDG-01**: Здания размещаются в `zones`, каждое имеет механику баффа или атаки
 - [x] **BLDG-02**: Волны врагов запускаются по таймеру/триггеру
-- [ ] **GAME-01**: Игрок может проиграть (цитадель захвачена) или выиграть раунд
+- [x] **GAME-01**: Игрок может проиграть (цитадель захвачена) или выиграть раунд
 - [ ] **GAME-02**: In-game HUD показывает состояние игры (волны, здоровье, ресурсы)
 
 ### Phase 4 — Boss Negotiation
@@ -115,7 +115,7 @@
 | UNIT-02 | Phase 3 | Complete |
 | BLDG-01 | Phase 3 | Complete |
 | BLDG-02 | Phase 3 | Complete |
-| GAME-01 | Phase 3 | Pending |
+| GAME-01 | Phase 3 | Complete |
 | GAME-02 | Phase 3 | Pending |
 | BOSS-01 | Phase 4 | Pending |
 | BOSS-02 | Phase 4 | Pending |
