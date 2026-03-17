@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+stopped_at: Completed 02-02-PLAN.md - wallet types and ScreenManager
+last_updated: "2026-03-17T12:14:59.249Z"
+last_activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
+progress:
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 6
+  completed_plans: 2
+  percent: 33
+---
+
 # Project State
 
 ## Project Reference
@@ -14,7 +30,7 @@ Plan: 1 of TBD in current phase
 Status: In progress
 Last activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
 
-Progress: [███░░░░░░░] 30%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -33,6 +49,7 @@ Progress: [███░░░░░░░] 30%
 **Recent Trend:**
 - Last 5 plans: Phase 1 Plan 1 (complete), Phase 2 Plan 1 (complete)
 - Trend: Stable
+| Phase 02-menu-network-architecture P02 | 3 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -47,6 +64,8 @@ Recent decisions affecting current work:
 - Phase 4 makes gameplay systems consume paths, anchors, zones, and entity meaning from exported map data.
 - (02-01) Use @solana/web3.js@1.x not 2.x — MagicBlock SDK requires 1.x as peer dependency.
 - (02-01) vitest jsdom environment for all screen module tests; dynamic imports in scaffolds preserve clear TDD RED failure messages.
+- [Phase 02-menu-network-architecture]: Screen router uses plain TS class with Record<Screen, ScreenModule> — no framework, matching project's vanilla TS + Vite pattern
+- [Phase 02-menu-network-architecture]: SolanaProvider interface models Phantom/Backpack browser extension API exactly — optional isPhantom/isBackpack flags for runtime provider detection
 
 ### Pending Todos
 
@@ -58,6 +77,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17
-Stopped at: Completed 02-menu-network-architecture/02-01-PLAN.md (vitest harness + test scaffolds)
-Resume file: .planning/phases/02-menu-network-architecture/02-02-PLAN.md (next plan)
+Last session: 2026-03-17T12:14:59.247Z
+Stopped at: Completed 02-02-PLAN.md - wallet types and ScreenManager
+Resume file: None
