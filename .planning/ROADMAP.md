@@ -33,7 +33,7 @@ Valkyrix v1 строится поэтапно: сначала фундамент
 **Plans**: 6 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Install deps (@solana/web3.js, MagicBlock SDK, vitest) + test scaffolds
+- [x] 02-01-PLAN.md — Install deps (@solana/web3.js, MagicBlock SDK, vitest) + test scaffolds
 - [ ] 02-02-PLAN.md — Type contracts (wallet.types.ts) + ScreenManager state machine
 - [ ] 02-03-PLAN.md — WalletService + WalletSplashScreen (Phantom + Backpack gate)
 - [ ] 02-04-PLAN.md — MainMenuScreen + SessionLayer (MagicBlock devnet stub, NET-01 docs)
@@ -78,7 +78,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Map & Runtime Foundation | 1/1 | Complete | 2026-03-17 |
-| 2. Menu & Network Architecture | 0/6 | Planned | - |
+| 2. Menu & Network Architecture | 1/6 | In Progress|  |
 | 3. Units, Buildings & Combat | 0/TBD | Not started | - |
 | 4. Boss — Negotiation Mechanic | 0/TBD | Not started | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |

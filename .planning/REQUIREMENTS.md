@@ -7,51 +7,71 @@
 
 ### Map Contract
 
-- [ ] **MAP-01**: User can save a map from the editor to a stable JSON structure used by the runtime
-- [ ] **MAP-02**: User can activate a saved map so the game runtime loads it through `active-map.json`
-- [ ] **MAP-03**: Runtime can load an exported map without requiring the editor to be present on the server
-- [ ] **MAP-04**: Re-saving a map in the editor updates runtime behavior without manual code edits
+- [x] **MAP-01**: User can save a map from the editor to a stable JSON structure used by the runtime
+- [x] **MAP-02**: User can activate a saved map so the game runtime loads it through `active-map.json`
+- [x] **MAP-03**: Runtime can load an exported map without requiring the editor to be present on the server
+- [x] **MAP-04**: Re-saving a map in the editor updates runtime behavior without manual code edits
 
 ### Isometric Runtime
 
-- [ ] **ISO-01**: Runtime renders the map in the same isometric orientation used in the editor
-- [ ] **ISO-02**: Runtime uses exported map width, height, tile width, and tile height as the source of truth
-- [ ] **ISO-03**: Runtime preserves correct world positioning for tiles and gameplay anchors on the isometric grid
+- [x] **ISO-01**: Runtime renders the map in the same isometric orientation used in the editor
+- [x] **ISO-02**: Runtime uses exported map width, height, tile width, and tile height as the source of truth
+- [x] **ISO-03**: Runtime preserves correct world positioning for tiles and gameplay anchors on the isometric grid
 
 ### Layers
 
-- [ ] **LAYR-01**: `ground` acts as the base visual and structural map layer in runtime
-- [ ] **LAYR-02**: `paths` defines gameplay movement routes and route-related map meaning
-- [ ] **LAYR-03**: `cam` defines camera-rail behavior when present, with stable fallback rules when absent
-- [ ] **LAYR-04**: `spawn` defines enemy or unit entry points in the runtime map
-- [ ] **LAYR-05**: `citadel` defines the main base/goal location in the runtime map
-- [ ] **LAYR-06**: `zones` defines gameplay zones such as restricted, buildable, or trigger areas
-- [ ] **LAYR-07**: `decor` remains visual-only and does not silently affect gameplay logic
+- [x] **LAYR-01**: `ground` acts as the base visual and structural map layer in runtime
+- [x] **LAYR-02**: `paths` defines gameplay movement routes and route-related map meaning
+- [x] **LAYR-03**: `cam` defines camera-rail behavior when present, with stable fallback rules when absent
+- [x] **LAYR-04**: `spawn` defines enemy or unit entry points in the runtime map
+- [x] **LAYR-05**: `citadel` defines the main base/goal location in the runtime map
+- [x] **LAYR-06**: `zones` defines gameplay zones such as restricted, buildable, or trigger areas
+- [x] **LAYR-07**: `decor` remains visual-only and does not silently affect gameplay logic
 
 ### Camera
 
-- [ ] **CAM-01**: Runtime applies exported camera zoom, start position, road offset, and movement mode
-- [ ] **CAM-02**: Runtime applies exported camera bounds and camera rail behavior exactly as saved by the editor
-- [ ] **CAM-03**: Editor game-mode preview matches runtime camera behavior closely enough for map tuning to be trustworthy
+- [x] **CAM-01**: Runtime applies exported camera zoom, start position, road offset, and movement mode
+- [x] **CAM-02**: Runtime applies exported camera bounds and camera rail behavior exactly as saved by the editor
+- [x] **CAM-03**: Editor game-mode preview matches runtime camera behavior closely enough for map tuning to be trustworthy
 
 ### Runtime Interpretation
 
-- [ ] **RUN-01**: Runtime interprets gameplay-relevant layers consistently from one map load to the next
+- [x] **RUN-01**: Runtime interprets gameplay-relevant layers consistently from one map load to the next
 - [ ] **RUN-02**: Runtime exposes spawn, citadel, path, and camera information from map data instead of hardcoded values
 - [ ] **RUN-03**: Runtime renders or represents exported entities in a way that preserves their gameplay meaning
 
 ## v2 Requirements
 
-### Gameplay Expansion
+### Phase 2 — Menu & Network
 
-- **GAME-01**: Units can traverse the map using the final path and zone rules
-- **GAME-02**: Combat, waves, or tower-defense systems react to map-defined anchors and areas
-- **GAME-03**: Runtime supports richer asset-backed entities beyond placeholder markers
+- [x] **UI-01**: Игрок видит главное меню при старте и может начать игру
+- [x] **UI-02**: Экраны маршрутизируются без перезагрузки страницы (лобби, игра, меню)
+- [ ] **NET-01**: Задокументирована схема сети (протокол, транспорт, сервер/P2P)
+- [x] **NET-02**: Меню подключается к игровой сессии через задокументированный слой
+- [x] **NET-03**: Лобби/комнаты — игроки могут создавать и вступать в сессии
 
-### Tooling
+### Phase 3 — Units, Buildings & Combat
 
-- **TOOL-01**: Editor validates layer misuse before save
-- **TOOL-02**: Runtime exposes richer map-debug visualization for designers
+- [ ] **UNIT-01**: Каждый тип юнита имеет здоровье, скорость, роль (задокументировано)
+- [ ] **UNIT-02**: Юниты спавнятся на `spawn`, движутся по `paths`, атакуют цитадель
+- [ ] **BLDG-01**: Здания размещаются в `zones`, каждое имеет механику баффа или атаки
+- [ ] **BLDG-02**: Волны врагов запускаются по таймеру/триггеру
+- [ ] **GAME-01**: Игрок может проиграть (цитадель захвачена) или выиграть раунд
+- [ ] **GAME-02**: In-game HUD показывает состояние игры (волны, здоровье, ресурсы)
+
+### Phase 4 — Boss Negotiation
+
+- [ ] **BOSS-01**: Босс появляется на карте по триггеру (событие волны или условие)
+- [ ] **BOSS-02**: Игроку показывается диалог-переговоры с вариантами ответа
+- [ ] **BOSS-03**: Успешные переговоры: босс уходит, игрок получает баффы
+- [ ] **BOSS-04**: Провал переговоров: босс злой, призывает орду, боёвка усиливается
+
+### Phase 5 — Multiplayer & Blockchain
+
+- [ ] **NET-04**: Несколько игроков играют в одной сессии в реальном времени
+- [ ] **CHAIN-01**: Каждый убитый юнит записывается как on-chain транзакция через MagicBlock
+- [ ] **CHAIN-02**: Лидерборд хранится на блокчейне
+- [ ] **CHAIN-03**: Лидерборд читается из блокчейна и отображается в игре
 
 ## Out of Scope
 
@@ -66,32 +86,50 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MAP-01 | Phase 1 | Pending |
-| MAP-02 | Phase 1 | Pending |
-| MAP-03 | Phase 1 | Pending |
-| MAP-04 | Phase 1 | Pending |
-| ISO-01 | Phase 2 | Pending |
-| ISO-02 | Phase 2 | Pending |
-| ISO-03 | Phase 2 | Pending |
-| LAYR-01 | Phase 2 | Pending |
-| LAYR-02 | Phase 4 | Pending |
-| LAYR-03 | Phase 3 | Pending |
-| LAYR-04 | Phase 4 | Pending |
-| LAYR-05 | Phase 4 | Pending |
-| LAYR-06 | Phase 4 | Pending |
-| LAYR-07 | Phase 2 | Pending |
-| CAM-01 | Phase 3 | Pending |
-| CAM-02 | Phase 3 | Pending |
-| CAM-03 | Phase 3 | Pending |
-| RUN-01 | Phase 1 | Pending |
-| RUN-02 | Phase 4 | Pending |
-| RUN-03 | Phase 4 | Pending |
+| MAP-01 | Phase 1 | Complete |
+| MAP-02 | Phase 1 | Complete |
+| MAP-03 | Phase 1 | Complete |
+| MAP-04 | Phase 1 | Complete |
+| ISO-01 | Phase 1 | Complete |
+| ISO-02 | Phase 1 | Complete |
+| ISO-03 | Phase 1 | Complete |
+| LAYR-01 | Phase 1 | Complete |
+| LAYR-02 | Phase 1 | Complete |
+| LAYR-03 | Phase 1 | Complete |
+| LAYR-04 | Phase 1 | Complete |
+| LAYR-05 | Phase 1 | Complete |
+| LAYR-06 | Phase 1 | Complete |
+| LAYR-07 | Phase 1 | Complete |
+| CAM-01 | Phase 1 | Complete |
+| CAM-02 | Phase 1 | Complete |
+| CAM-03 | Phase 1 | Complete |
+| RUN-01 | Phase 1 | Complete |
+| RUN-02 | Phase 3 | Pending |
+| RUN-03 | Phase 3 | Pending |
+| UI-01 | Phase 2 | Complete |
+| UI-02 | Phase 2 | Complete |
+| NET-01 | Phase 2 | Pending |
+| NET-02 | Phase 2 | Complete |
+| NET-03 | Phase 2 | Complete |
+| UNIT-01 | Phase 3 | Pending |
+| UNIT-02 | Phase 3 | Pending |
+| BLDG-01 | Phase 3 | Pending |
+| BLDG-02 | Phase 3 | Pending |
+| GAME-01 | Phase 3 | Pending |
+| GAME-02 | Phase 3 | Pending |
+| BOSS-01 | Phase 4 | Pending |
+| BOSS-02 | Phase 4 | Pending |
+| BOSS-03 | Phase 4 | Pending |
+| BOSS-04 | Phase 4 | Pending |
+| NET-04 | Phase 5 | Pending |
+| CHAIN-01 | Phase 5 | Pending |
+| CHAIN-02 | Phase 5 | Pending |
+| CHAIN-03 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 20 total
-- Mapped to phases: 20
-- Unmapped: 0
+- Phase 1 complete: 18 requirements
+- Phase 2–5 pending: 21 requirements
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after roadmap traceability mapping*
+*Last updated: 2026-03-17 — Phase 1 complete, all map/iso/camera/layer requirements satisfied*
