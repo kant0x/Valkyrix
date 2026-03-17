@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-03-17T18:47:31.244Z"
+stopped_at: Completed 03-03-PLAN.md
+last_updated: "2026-03-17T18:48:38.783Z"
 last_activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 12
-  completed_plans: 8
+  completed_plans: 9
   percent: 33
 ---
 
@@ -56,6 +56,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 02-menu-network-architecture P06 | 25min | 2 tasks | 1 files |
 | Phase 03-units-buildings-combat P01 | 4min | 2 tasks | 3 files |
 | Phase 03-units-buildings-combat P02 | 3min | 2 tasks | 5 files |
+| Phase 03-units-buildings-combat P03 | 3min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase 03-units-buildings-combat]: UnitFaction stored as string union 'enemy'|'ally' for readability and future extensibility
 - [Phase 03-units-buildings-combat]: Ally path cached as reversed copy in UnitSystem — avoids re-reversing every tick, same lerp code path for both factions
 - [Phase 03-units-buildings-combat]: spawnQueue delay decremented in UnitSystem.update — single system owns unit lifecycle from queue to active
+- [Phase 03-units-buildings-combat]: Attack tower cooldown only decrements when >0 — prevents negative drift when idle and no target in range
+- [Phase 03-units-buildings-combat]: speedBuff optional Unit field set by buff tower each frame; UnitSystem reads as multiplier (unit.speedBuff ?? 1.0)
+- [Phase 03-units-buildings-combat]: registerKill() as standalone export from ResourceSystem — CombatSystem imports without ResourceSystem instance
 
 ### Pending Todos
 
@@ -97,6 +101,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17T18:47:31.241Z
-Stopped at: Completed 03-02-PLAN.md
+Last session: 2026-03-17T18:48:38.781Z
+Stopped at: Completed 03-03-PLAN.md
 Resume file: None
