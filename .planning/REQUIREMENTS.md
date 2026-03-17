@@ -38,7 +38,7 @@
 
 - [x] **RUN-01**: Runtime interprets gameplay-relevant layers consistently from one map load to the next
 - [x] **RUN-02**: Runtime exposes spawn, citadel, path, and camera information from map data instead of hardcoded values
-- [ ] **RUN-03**: Runtime renders or represents exported entities in a way that preserves their gameplay meaning
+- [x] **RUN-03**: Runtime renders or represents exported entities in a way that preserves their gameplay meaning
 
 ## v2 Requirements
 
@@ -57,7 +57,7 @@
 - [x] **BLDG-01**: Здания размещаются в `zones`, каждое имеет механику баффа или атаки
 - [x] **BLDG-02**: Волны врагов запускаются по таймеру/триггеру
 - [x] **GAME-01**: Игрок может проиграть (цитадель захвачена) или выиграть раунд
-- [ ] **GAME-02**: In-game HUD показывает состояние игры (волны, здоровье, ресурсы)
+- [x] **GAME-02**: In-game HUD показывает состояние игры (волны, здоровье, ресурсы)
 
 ### Phase 4 — Boss Negotiation
 
@@ -105,7 +105,7 @@
 | CAM-03 | Phase 1 | Complete |
 | RUN-01 | Phase 1 | Complete |
 | RUN-02 | Phase 3 | Complete |
-| RUN-03 | Phase 3 | Pending |
+| RUN-03 | Phase 3 | Complete |
 | UI-01 | Phase 2 | Complete |
 | UI-02 | Phase 2 | Complete |
 | NET-01 | Phase 2 | Complete |
@@ -116,7 +116,7 @@
 | BLDG-01 | Phase 3 | Complete |
 | BLDG-02 | Phase 3 | Complete |
 | GAME-01 | Phase 3 | Complete |
-| GAME-02 | Phase 3 | Pending |
+| GAME-02 | Phase 3 | Complete |
 | BOSS-01 | Phase 4 | Pending |
 | BOSS-02 | Phase 4 | Pending |
 | BOSS-03 | Phase 4 | Pending |
