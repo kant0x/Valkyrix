@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-04-PLAN.md - MainMenuScreen and SessionLayer
-last_updated: "2026-03-17T12:19:38.350Z"
+stopped_at: Completed 02-05-PLAN.md - EscMenuOverlay and HudOverlay
+last_updated: "2026-03-17T12:20:45.986Z"
 last_activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 5
   percent: 33
 ---
 
@@ -51,6 +51,8 @@ Progress: [███░░░░░░░] 33%
 - Trend: Stable
 | Phase 02-menu-network-architecture P02 | 3 | 2 tasks | 4 files |
 | Phase 02-menu-network-architecture P04 | 5 | 2 tasks | 2 files |
+| Phase 02-menu-network-architecture P03 | 8 | 2 tasks | 3 files |
+| Phase 02-menu-network-architecture P05 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -69,6 +71,11 @@ Recent decisions affecting current work:
 - [Phase 02-menu-network-architecture]: SolanaProvider interface models Phantom/Backpack browser extension API exactly — optional isPhantom/isBackpack flags for runtime provider detection
 - [Phase 02-menu-network-architecture]: Dynamic import of @solana/web3.js inside connect() defers ~400KB bundle until Play pressed
 - [Phase 02-menu-network-architecture]: Leaderboard button navigates to game as Phase 5 placeholder (real leaderboard reads blockchain data)
+- [Phase 02-menu-network-architecture]: window.phantom?.solana?.isPhantom detection (not window.solana) for Phantom provider to avoid conflicts
+- [Phase 02-menu-network-architecture]: Install links shown (not disabled buttons) when extension absent — matches Phantom/Backpack UX convention
+- [Phase 02-menu-network-architecture]: connectWallet() JSDoc annotates user-gesture requirement — browsers block wallet popups from programmatic calls
+- [Phase 02-menu-network-architecture]: EscMenuOverlay is not a ScreenModule — mounted alongside canvas by game screen, not managed by ScreenManager
+- [Phase 02-menu-network-architecture]: HudOverlay exposes typed partial-update HudState interface for Phase 3 combat data binding
 
 ### Pending Todos
 
@@ -80,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17T12:19:38.348Z
-Stopped at: Completed 02-04-PLAN.md - MainMenuScreen and SessionLayer
+Last session: 2026-03-17T12:20:45.983Z
+Stopped at: Completed 02-05-PLAN.md - EscMenuOverlay and HudOverlay
 Resume file: None
