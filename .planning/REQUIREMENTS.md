@@ -66,32 +66,32 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MAP-01 | Phase TBD | Pending |
-| MAP-02 | Phase TBD | Pending |
-| MAP-03 | Phase TBD | Pending |
-| MAP-04 | Phase TBD | Pending |
-| ISO-01 | Phase TBD | Pending |
-| ISO-02 | Phase TBD | Pending |
-| ISO-03 | Phase TBD | Pending |
-| LAYR-01 | Phase TBD | Pending |
-| LAYR-02 | Phase TBD | Pending |
-| LAYR-03 | Phase TBD | Pending |
-| LAYR-04 | Phase TBD | Pending |
-| LAYR-05 | Phase TBD | Pending |
-| LAYR-06 | Phase TBD | Pending |
-| LAYR-07 | Phase TBD | Pending |
-| CAM-01 | Phase TBD | Pending |
-| CAM-02 | Phase TBD | Pending |
-| CAM-03 | Phase TBD | Pending |
-| RUN-01 | Phase TBD | Pending |
-| RUN-02 | Phase TBD | Pending |
-| RUN-03 | Phase TBD | Pending |
+| MAP-01 | Phase 1 | Pending |
+| MAP-02 | Phase 1 | Pending |
+| MAP-03 | Phase 1 | Pending |
+| MAP-04 | Phase 1 | Pending |
+| ISO-01 | Phase 2 | Pending |
+| ISO-02 | Phase 2 | Pending |
+| ISO-03 | Phase 2 | Pending |
+| LAYR-01 | Phase 2 | Pending |
+| LAYR-02 | Phase 4 | Pending |
+| LAYR-03 | Phase 3 | Pending |
+| LAYR-04 | Phase 4 | Pending |
+| LAYR-05 | Phase 4 | Pending |
+| LAYR-06 | Phase 4 | Pending |
+| LAYR-07 | Phase 2 | Pending |
+| CAM-01 | Phase 3 | Pending |
+| CAM-02 | Phase 3 | Pending |
+| CAM-03 | Phase 3 | Pending |
+| RUN-01 | Phase 1 | Pending |
+| RUN-02 | Phase 4 | Pending |
+| RUN-03 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20
+- Mapped to phases: 20
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after initial definition draft*
+*Last updated: 2026-03-17 after roadmap traceability mapping*
