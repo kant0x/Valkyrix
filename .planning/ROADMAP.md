@@ -7,7 +7,7 @@ Valkyrix v1 строится поэтапно: сначала фундамент
 ## Phases
 
 - [x] **Phase 1: Map & Runtime Foundation** — Редактор карт, изометрический рендерер, экспорт/активация карты, система слоёв, камера. Всё готово.
-- [ ] **Phase 2: Menu & Network Architecture** — Главное меню, как оно устроено, через что подключается, на какой сети работает. Лобби, комнаты, маршрутизация экранов.
+- [x] **Phase 2: Menu & Network Architecture** — Главное меню, как оно устроено, через что подключается, на какой сети работает. Лобби, комнаты, маршрутизация экранов. (completed 2026-03-17)
 - [ ] **Phase 3: Units, Buildings & Combat** — Юниты (здоровье, движение по path, кто за что отвечает), здания и их баффы, базовая боёвка, волны врагов.
 - [ ] **Phase 4: Boss — Negotiation Mechanic** — Босс выходит на поле; игрок может договориться с ним (он уходит → баффы) или провалить переговоры (он остаётся злой → призывает орду своих юнитов). Диалог, ИИ-мозг босса, реакции.
 - [ ] **Phase 5: Multiplayer & Blockchain Leaderboard** — Настоящий мультиплеер подключается, каждый убитый юнит = транзакция через MagicBlock, лидерборд привязан к блокчейну.
@@ -78,7 +78,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Map & Runtime Foundation | 1/1 | Complete | 2026-03-17 |
-| 2. Menu & Network Architecture | 5/6 | In Progress|  |
+| 2. Menu & Network Architecture | 6/6 | Complete   | 2026-03-17 |
 | 3. Units, Buildings & Combat | 0/TBD | Not started | - |
 | 4. Boss — Negotiation Mechanic | 0/TBD | Not started | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |

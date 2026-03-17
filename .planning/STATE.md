@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-05-PLAN.md - EscMenuOverlay and HudOverlay
-last_updated: "2026-03-17T12:20:45.986Z"
+stopped_at: Completed 02-06-PLAN.md
+last_updated: "2026-03-17T14:18:50.649Z"
 last_activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 33
 ---
 
@@ -53,6 +53,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 02-menu-network-architecture P04 | 5 | 2 tasks | 2 files |
 | Phase 02-menu-network-architecture P03 | 8 | 2 tasks | 3 files |
 | Phase 02-menu-network-architecture P05 | 2min | 2 tasks | 2 files |
+| Phase 02-menu-network-architecture P06 | 25min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,8 @@ Recent decisions affecting current work:
 - [Phase 02-menu-network-architecture]: connectWallet() JSDoc annotates user-gesture requirement — browsers block wallet popups from programmatic calls
 - [Phase 02-menu-network-architecture]: EscMenuOverlay is not a ScreenModule — mounted alongside canvas by game screen, not managed by ScreenManager
 - [Phase 02-menu-network-architecture]: HudOverlay exposes typed partial-update HudState interface for Phase 3 combat data binding
+- [Phase 02-menu-network-architecture]: Two-step circular-reference pattern for ScreenManager init: construct screens with proxy nav object, then wire real manager
+- [Phase 02-menu-network-architecture]: animating guard at module scope in GameScreen prevents duplicate requestAnimationFrame loops on remount
 
 ### Pending Todos
 
@@ -87,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17T12:20:45.983Z
-Stopped at: Completed 02-05-PLAN.md - EscMenuOverlay and HudOverlay
+Last session: 2026-03-17T14:18:38.375Z
+Stopped at: Completed 02-06-PLAN.md
 Resume file: None
