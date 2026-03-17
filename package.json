@@ -1,0 +1,23 @@
+{
+  "name": "valkyrix",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite/config.dev.mjs",
+    "build": "vite build --config vite/config.prod.mjs",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@vitest/ui": "^4.1.0",
+    "jsdom": "^29.0.0",
+    "terser": "^5.39.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.3.1",
+    "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "@magicblock-labs/ephemeral-rollups-sdk": "^0.8.8",
+    "@solana/web3.js": "^1.98.4"
+  }
+}
