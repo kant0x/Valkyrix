@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md - wallet types and ScreenManager
-last_updated: "2026-03-17T12:14:59.249Z"
+stopped_at: Completed 02-04-PLAN.md - MainMenuScreen and SessionLayer
+last_updated: "2026-03-17T12:19:38.350Z"
 last_activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
   percent: 33
 ---
 
@@ -50,6 +50,7 @@ Progress: [███░░░░░░░] 33%
 - Last 5 plans: Phase 1 Plan 1 (complete), Phase 2 Plan 1 (complete)
 - Trend: Stable
 | Phase 02-menu-network-architecture P02 | 3 | 2 tasks | 4 files |
+| Phase 02-menu-network-architecture P04 | 5 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,8 @@ Recent decisions affecting current work:
 - (02-01) vitest jsdom environment for all screen module tests; dynamic imports in scaffolds preserve clear TDD RED failure messages.
 - [Phase 02-menu-network-architecture]: Screen router uses plain TS class with Record<Screen, ScreenModule> — no framework, matching project's vanilla TS + Vite pattern
 - [Phase 02-menu-network-architecture]: SolanaProvider interface models Phantom/Backpack browser extension API exactly — optional isPhantom/isBackpack flags for runtime provider detection
+- [Phase 02-menu-network-architecture]: Dynamic import of @solana/web3.js inside connect() defers ~400KB bundle until Play pressed
+- [Phase 02-menu-network-architecture]: Leaderboard button navigates to game as Phase 5 placeholder (real leaderboard reads blockchain data)
 
 ### Pending Todos
 
@@ -77,6 +80,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17T12:14:59.247Z
-Stopped at: Completed 02-02-PLAN.md - wallet types and ScreenManager
+Last session: 2026-03-17T12:19:38.348Z
+Stopped at: Completed 02-04-PLAN.md - MainMenuScreen and SessionLayer
 Resume file: None
