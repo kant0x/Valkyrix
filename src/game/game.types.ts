@@ -30,6 +30,7 @@ export interface Unit {
   state: 'moving' | 'fighting' | 'attacking-base';
   fightingWith: number | null; // id of opponent unit
   attackCooldown: number;      // seconds until next attack
+  speedBuff?: number;          // speed multiplier applied by buff towers each frame (1.25 = +25%)
 }
 
 export interface Building {
