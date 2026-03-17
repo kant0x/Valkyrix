@@ -49,7 +49,15 @@ Plans:
   2. Каждый тип юнита имеет определённое здоровье, скорость, роль.
   3. Здания размещаются в `zones`, у каждого есть механика баффа/атаки.
   4. Волны запускаются по таймеру/триггеру, игрок может проиграть или выиграть раунд.
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Type contracts (game.types.ts) + PathExtractor (wave 1)
+- [ ] 03-02-PLAN.md — GameState factory + UnitSystem + WaveController (wave 2)
+- [ ] 03-03-PLAN.md — BuildingSystem + ProjectileSystem + ResourceSystem (wave 2, parallel)
+- [ ] 03-04-PLAN.md — CombatSystem + win/loss conditions (wave 3)
+- [ ] 03-05-PLAN.md — GameRenderer + HudOverlay extensions (wave 3, parallel)
+- [ ] 03-06-PLAN.md — Wire all systems into main.ts + human verification checkpoint (wave 4)
 
 ### Phase 4: Boss — Negotiation Mechanic
 **Goal**: Босс появляется на поле как особый юнит. Игрок видит диалог-переговоры. Два исхода: договорились (босс уходит, игрок получает баффы) или провал (босс злой, призывает орду юнитов).
@@ -79,6 +87,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Map & Runtime Foundation | 1/1 | Complete | 2026-03-17 |
 | 2. Menu & Network Architecture | 6/6 | Complete   | 2026-03-17 |
-| 3. Units, Buildings & Combat | 0/TBD | Not started | - |
+| 3. Units, Buildings & Combat | 1/6 | In Progress|  |
 | 4. Boss — Negotiation Mechanic | 0/TBD | Not started | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |

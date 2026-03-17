@@ -37,7 +37,7 @@
 ### Runtime Interpretation
 
 - [x] **RUN-01**: Runtime interprets gameplay-relevant layers consistently from one map load to the next
-- [ ] **RUN-02**: Runtime exposes spawn, citadel, path, and camera information from map data instead of hardcoded values
+- [x] **RUN-02**: Runtime exposes spawn, citadel, path, and camera information from map data instead of hardcoded values
 - [ ] **RUN-03**: Runtime renders or represents exported entities in a way that preserves their gameplay meaning
 
 ## v2 Requirements
@@ -52,7 +52,7 @@
 
 ### Phase 3 — Units, Buildings & Combat
 
-- [ ] **UNIT-01**: Каждый тип юнита имеет здоровье, скорость, роль (задокументировано)
+- [x] **UNIT-01**: Каждый тип юнита имеет здоровье, скорость, роль (задокументировано)
 - [ ] **UNIT-02**: Юниты спавнятся на `spawn`, движутся по `paths`, атакуют цитадель
 - [ ] **BLDG-01**: Здания размещаются в `zones`, каждое имеет механику баффа или атаки
 - [ ] **BLDG-02**: Волны врагов запускаются по таймеру/триггеру
@@ -104,14 +104,14 @@
 | CAM-02 | Phase 1 | Complete |
 | CAM-03 | Phase 1 | Complete |
 | RUN-01 | Phase 1 | Complete |
-| RUN-02 | Phase 3 | Pending |
+| RUN-02 | Phase 3 | Complete |
 | RUN-03 | Phase 3 | Pending |
 | UI-01 | Phase 2 | Complete |
 | UI-02 | Phase 2 | Complete |
 | NET-01 | Phase 2 | Complete |
 | NET-02 | Phase 2 | Complete |
 | NET-03 | Phase 2 | Complete |
-| UNIT-01 | Phase 3 | Pending |
+| UNIT-01 | Phase 3 | Complete |
 | UNIT-02 | Phase 3 | Pending |
 | BLDG-01 | Phase 3 | Pending |
 | BLDG-02 | Phase 3 | Pending |

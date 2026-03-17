@@ -2,13 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-17T14:23:04.292Z"
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-03-17T18:41:54.105Z"
+last_activity: 2026-03-17 - Phase 2 Plan 1 complete (vitest harness + test scaffolds)
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 7
+  total_phases: 5
+  completed_phases: 1
+  total_plans: 12
   completed_plans: 7
+  percent: 33
 ---
 
 # Project State
@@ -51,6 +54,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 02-menu-network-architecture P03 | 8 | 2 tasks | 3 files |
 | Phase 02-menu-network-architecture P05 | 2min | 2 tasks | 2 files |
 | Phase 02-menu-network-architecture P06 | 25min | 2 tasks | 1 files |
+| Phase 03-units-buildings-combat P01 | 4min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -76,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase 02-menu-network-architecture]: HudOverlay exposes typed partial-update HudState interface for Phase 3 combat data binding
 - [Phase 02-menu-network-architecture]: Two-step circular-reference pattern for ScreenManager init: construct screens with proxy nav object, then wire real manager
 - [Phase 02-menu-network-architecture]: animating guard at module scope in GameScreen prevents duplicate requestAnimationFrame loops on remount
+- [Phase 03-units-buildings-combat]: Greedy nearest-neighbor path sort seeded from portal world coords avoids U-turn artifacts on authored linear paths
+- [Phase 03-units-buildings-combat]: PathNode stores world coords (not tile col/row) so unit lerp math works directly in world space
+- [Phase 03-units-buildings-combat]: UnitFaction stored as string union 'enemy'|'ally' for readability and future extensibility
 
 ### Pending Todos
 
@@ -87,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17T14:18:38.375Z
-Stopped at: Completed 02-06-PLAN.md
+Last session: 2026-03-17T18:41:54.103Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None
