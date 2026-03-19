@@ -31,6 +31,7 @@ export interface Unit {
   fightingWith: number | null; // id of opponent unit
   attackCooldown: number;      // seconds until next attack
   speedBuff?: number;          // speed multiplier applied by buff towers each frame (1.25 = +25%)
+  laneOffset?: number;         // signed world-space offset across road width for lane spreading
 }
 
 export interface Building {
@@ -55,6 +56,8 @@ export interface Projectile {
   targetUnitId: number;
   speed: number;  // world units per second
   damage: number;
+  source?: 'tower' | 'citadel';
+  size?: number;
 }
 
 export interface GameState {
@@ -73,6 +76,7 @@ export interface GameState {
   resources: number;         // electrolatov
   nextId: number;            // auto-increment for unit/building IDs
   pathNodes: PathNode[];     // enemy direction: index 0 = portal, last = citadel
+  enemyLaneOffsets?: number[]; // lateral lane offsets computed from the authored road width near spawn
 }
 
 // Unit balance table — values from RESEARCH.md Phase 3 balance table
@@ -80,10 +84,28 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
   'light-enemy': {
     role: 'light',
     hp: 40,
-    speed: 80,
+    speed: 72,
     damage: 8,
     attackRate: 1.0,
-    sprite: 'public/assets/pers/viking/',
+    sprite: 'boits',      // fast weak enemy — boits spritesheet
+    faction: 'enemy',
+  },
+  'heavy-enemy': {
+    role: 'heavy',
+    hp: 150,
+    speed: 36,
+    damage: 25,
+    attackRate: 0.5,
+    sprite: 'boits',      // reuses boits for now; Phase 4 gets robot sprite
+    faction: 'enemy',
+  },
+  'ranged-enemy': {
+    role: 'ranged',
+    hp: 60,
+    speed: 50,
+    damage: 15,
+    attackRate: 0.8,
+    sprite: 'boits',
     faction: 'enemy',
   },
   'light-ally': {
@@ -92,25 +114,16 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     speed: 70,
     damage: 10,
     attackRate: 1.0,
-    sprite: 'public/assets/pers/soldier/',
+    sprite: 'viking',     // viking defender
     faction: 'ally',
   },
-  'heavy-enemy': {
-    role: 'heavy',
-    hp: 150,
-    speed: 40,
-    damage: 25,
-    attackRate: 0.5,
-    sprite: 'public/assets/pers/viking/',
-    faction: 'enemy',
-  },
-  'ranged-enemy': {
-    role: 'ranged',
-    hp: 60,
-    speed: 55,
-    damage: 15,
-    attackRate: 0.8,
-    sprite: 'public/assets/pers/viking/',
-    faction: 'enemy',
+  'collector': {
+    role: 'collector',
+    hp: 30,
+    speed: 120,
+    damage: 0,
+    attackRate: 0,
+    sprite: 'collector',  // flying loot drone
+    faction: 'ally',
   },
 };

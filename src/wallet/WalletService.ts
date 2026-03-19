@@ -3,6 +3,40 @@ import type { WalletType, SolanaProvider, WalletState } from './wallet.types';
 
 let _state: WalletState = { connected: false, publicKey: null, walletType: null };
 let _provider: SolanaProvider | null = null;
+let _listeningProvider: SolanaProvider | null = null;
+
+function resetState(): void {
+  _state = { connected: false, publicKey: null, walletType: null };
+  _provider = null;
+}
+
+function attachProviderListeners(provider: SolanaProvider): void {
+  if (_listeningProvider === provider) return;
+  _listeningProvider = provider;
+
+  provider.on('disconnect', () => {
+    resetState();
+  });
+
+  provider.on('accountChanged', (newKey) => {
+    if (!newKey) {
+      resetState();
+      return;
+    }
+
+    _state = {
+      ..._state,
+      connected: true,
+      publicKey: String((newKey as { toString(): string }).toString()),
+    };
+  });
+}
+
+function setConnectedState(type: WalletType, provider: SolanaProvider, key: string): void {
+  _provider = provider;
+  _state = { connected: true, publicKey: key, walletType: type };
+  attachProviderListeners(provider);
+}
 
 export function getProvider(type: WalletType): SolanaProvider | null {
   if (type === 'phantom') {
@@ -46,9 +80,28 @@ export async function connectWallet(type: WalletType): Promise<string> {
 export async function disconnectWallet(): Promise<void> {
   if (_provider) {
     await _provider.disconnect();
-    _provider = null;
   }
-  _state = { connected: false, publicKey: null, walletType: null };
+  resetState();
+}
+
+export function restoreWalletSession(): WalletState {
+  if (_state.connected && _state.publicKey && _provider) {
+    return getCurrentState();
+  }
+
+  const candidates: Array<[WalletType, SolanaProvider | null]> = [
+    ['phantom', getProvider('phantom')],
+    ['backpack', getProvider('backpack')],
+  ];
+
+  for (const [type, provider] of candidates) {
+    if (provider?.isConnected && provider.publicKey) {
+      setConnectedState(type, provider, provider.publicKey.toString());
+      break;
+    }
+  }
+
+  return getCurrentState();
 }
 
 export function getCurrentState(): WalletState {

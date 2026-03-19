@@ -25,14 +25,18 @@ export class EscMenuOverlay {
     el.style.display = 'none';
     el.innerHTML = `
       <div class="vk-esc-panel">
-        <h2 class="vk-esc-title">Menu</h2>
+        <div class="vk-esc-head">
+          <p class="vk-esc-kicker">Field Console</p>
+          <h2 class="vk-esc-title">System</h2>
+        </div>
+        <button id="btn-resume-battle" class="vk-esc-btn vk-esc-btn-primary">Return to Battle</button>
         <label class="vk-esc-music">
           <input type="checkbox" id="vk-music-toggle" checked />
           Music
         </label>
         <button id="btn-exit-menu" class="vk-esc-btn">Exit to Menu</button>
         <div id="vk-exit-confirm" class="vk-exit-confirm" style="display:none">
-          <p>Progress will be lost. Exit?</p>
+          <p>Progress from this battle will be lost. Leave the field?</p>
           <div class="vk-confirm-buttons">
             <button id="btn-confirm-exit" class="vk-esc-btn vk-btn-danger">Exit</button>
             <button id="btn-cancel-exit" class="vk-esc-btn">Stay</button>
@@ -57,6 +61,19 @@ export class EscMenuOverlay {
 
   toggle(): void {
     this.visible = !this.visible;
+    if (!this.visible) {
+      this.resetExitPrompt();
+    }
+    this.syncVisibility();
+  }
+
+  private close(): void {
+    this.visible = false;
+    this.resetExitPrompt();
+    this.syncVisibility();
+  }
+
+  private syncVisibility(): void {
     if (this.el) {
       this.el.style.display = this.visible ? 'flex' : 'none';
     }
@@ -75,6 +92,7 @@ export class EscMenuOverlay {
 
   private bindEvents(el: HTMLElement): void {
     const musicToggle = el.querySelector<HTMLInputElement>('#vk-music-toggle');
+    const resumeBtn = el.querySelector<HTMLButtonElement>('#btn-resume-battle');
     const exitBtn = el.querySelector<HTMLButtonElement>('#btn-exit-menu');
     const confirmEl = el.querySelector<HTMLElement>('#vk-exit-confirm');
     const confirmExitBtn = el.querySelector<HTMLButtonElement>('#btn-confirm-exit');
@@ -82,6 +100,10 @@ export class EscMenuOverlay {
 
     musicToggle?.addEventListener('change', () => {
       this.musicEnabled = musicToggle.checked;
+    });
+
+    resumeBtn?.addEventListener('click', () => {
+      this.close();
     });
 
     exitBtn?.addEventListener('click', () => {
@@ -95,9 +117,15 @@ export class EscMenuOverlay {
     });
 
     cancelExitBtn?.addEventListener('click', () => {
-      if (confirmEl) confirmEl.style.display = 'none';
-      if (exitBtn) exitBtn.style.display = 'block';
+      this.resetExitPrompt();
     });
+  }
+
+  private resetExitPrompt(): void {
+    const confirmEl = this.el?.querySelector<HTMLElement>('#vk-exit-confirm');
+    const exitBtn = this.el?.querySelector<HTMLButtonElement>('#btn-exit-menu');
+    if (confirmEl) confirmEl.style.display = 'none';
+    if (exitBtn) exitBtn.style.display = 'block';
   }
 
   private ensureStyle(): void {
@@ -112,27 +140,98 @@ export class EscMenuOverlay {
         z-index: 100;
       }
       .vk-esc-panel {
-        background: #0b1220; border: 1px solid rgba(151,194,235,0.25);
-        border-radius: 8px; padding: 32px 40px;
-        display: flex; flex-direction: column; gap: 20px; align-items: center;
-        min-width: 280px;
+        width: min(92vw, 360px);
+        background:
+          linear-gradient(180deg, rgba(12,21,33,0.98), rgba(6,11,18,0.98));
+        border: 1px solid rgba(151,194,235,0.22);
+        border-radius: 18px;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        align-items: stretch;
+        box-shadow:
+          0 24px 48px rgba(0, 0, 0, 0.34),
+          inset 0 1px 0 rgba(233, 244, 255, 0.04);
       }
-      .vk-esc-title { color: #c8d8e8; font-family: sans-serif; font-size: 1.4rem; }
-      .vk-esc-music { color: #8aa8c8; font-family: sans-serif; display: flex; gap: 8px; align-items: center; cursor: pointer; }
+      .vk-esc-head { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+      .vk-esc-kicker {
+        margin: 0;
+        color: #7bb9e8;
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      }
+      .vk-esc-title {
+        margin: 0;
+        color: #e0f1ff;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-size: 1.8rem;
+      }
+      .vk-esc-music {
+        color: #9dc0de;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        cursor: pointer;
+        justify-content: center;
+      }
       .vk-esc-btn {
-        background: rgba(151,194,235,0.18); color: #c8d8e8;
-        border: 1px solid rgba(151,194,235,0.35); border-radius: 6px;
-        padding: 10px 28px; font-size: 0.95rem; cursor: pointer;
-        font-family: sans-serif; width: 100%;
-        transition: background 0.15s;
+        background: linear-gradient(180deg, rgba(27,47,71,0.92), rgba(14,25,38,0.98));
+        color: #d9ecff;
+        border: 1px solid rgba(151,194,235,0.28);
+        border-radius: 12px;
+        padding: 12px 18px;
+        font-size: 0.95rem;
+        cursor: pointer;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        width: 100%;
+        transition: transform 0.15s, border-color 0.15s, background 0.15s;
       }
-      .vk-esc-btn:hover { background: rgba(151,194,235,0.28); }
-      .vk-btn-danger { border-color: rgba(220,80,80,0.5); color: #e07070; }
-      .vk-btn-danger:hover { background: rgba(220,80,80,0.2); }
-      .vk-exit-confirm { display: flex; flex-direction: column; gap: 12px; align-items: center; width: 100%; }
-      .vk-exit-confirm p { color: #c8d8e8; font-family: sans-serif; font-size: 0.9rem; }
+      .vk-esc-btn:hover {
+        transform: translateY(-1px);
+        background: linear-gradient(180deg, rgba(34,58,86,0.96), rgba(15,28,44,1));
+        border-color: rgba(174,213,247,0.4);
+      }
+      .vk-esc-btn-primary {
+        box-shadow: 0 0 0 1px rgba(105, 203, 255, 0.12), 0 0 20px rgba(76, 192, 255, 0.12);
+      }
+      .vk-btn-danger {
+        border-color: rgba(240,106,106,0.45);
+        color: #ffb0b0;
+      }
+      .vk-btn-danger:hover {
+        background: linear-gradient(180deg, rgba(88,30,30,0.96), rgba(52,16,16,1));
+      }
+      .vk-exit-confirm {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        align-items: center;
+        width: 100%;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(9, 15, 24, 0.86);
+        border: 1px solid rgba(240,106,106,0.18);
+      }
+      .vk-exit-confirm p {
+        margin: 0;
+        color: #d9ecff;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-size: 0.92rem;
+        line-height: 1.45;
+        text-align: center;
+      }
       .vk-confirm-buttons { display: flex; gap: 10px; width: 100%; }
-      .vk-esc-hint { color: #4a6a8a; font-size: 0.75rem; font-family: sans-serif; }
+      .vk-esc-hint {
+        margin: 0;
+        color: #6f8faa;
+        font-size: 0.75rem;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        text-align: center;
+      }
     `;
     document.head.appendChild(style);
   }

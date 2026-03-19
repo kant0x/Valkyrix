@@ -21,6 +21,7 @@ export class ScreenManager {
   }
 
   navigateTo(screen: Screen): void {
+    if (this.current === screen) return;
     if (this.current !== null) {
       this.modules[this.current].unmount();
     }

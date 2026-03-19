@@ -40,6 +40,28 @@ Plans:
 - [ ] 02-05-PLAN.md — EscMenuOverlay (no-pause) + HudOverlay
 - [ ] 02-06-PLAN.md — Wire ScreenManager into main.ts + human verification checkpoint
 
+### Phase 02.1: Menu and UX refresh (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 2
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 02.1 to break down)
+
+### Phase 02.2: In-game menu and overlay UX (INSERTED)
+
+**Goal:** Turn the current passive HUD and emergency build buttons into a real in-match command layer: persistent bottom battle bar, compact ESC system overlay, and visually aligned result overlays.
+**Requirements**: GAME-02, BLDG-01, UI-02
+**Depends on:** Phase 2
+**Plans:** 2 complete, 1 pending human verification
+
+Plans:
+- [x] 02.2-01-PLAN.md - Refactor HudOverlay into a bottom command bar with explicit battle-control APIs
+- [x] 02.2-02-PLAN.md - Wire main.ts to HUD-driven tower commands and remove floating build buttons
+- [ ] 02.2-03-PLAN.md - Refresh EscMenuOverlay as a compact system overlay and run human verification
+
 ### Phase 3: Units, Buildings & Combat
 **Goal**: Юниты ходят по authored paths, здания размещаются на карте и дают баффы, базовая боёвка работает, волны врагов запускаются.
 **Depends on**: Phase 2
@@ -49,15 +71,15 @@ Plans:
   2. Каждый тип юнита имеет определённое здоровье, скорость, роль.
   3. Здания размещаются в `zones`, у каждого есть механика баффа/атаки.
   4. Волны запускаются по таймеру/триггеру, игрок может проиграть или выиграть раунд.
-**Plans**: 6 plans
+**Plans**: 6 complete
 
 Plans:
-- [ ] 03-01-PLAN.md — Type contracts (game.types.ts) + PathExtractor (wave 1)
-- [ ] 03-02-PLAN.md — GameState factory + UnitSystem + WaveController (wave 2)
-- [ ] 03-03-PLAN.md — BuildingSystem + ProjectileSystem + ResourceSystem (wave 2, parallel)
-- [ ] 03-04-PLAN.md — CombatSystem + win/loss conditions (wave 3)
-- [ ] 03-05-PLAN.md — GameRenderer + HudOverlay extensions (wave 3, parallel)
-- [ ] 03-06-PLAN.md — Wire all systems into main.ts + human verification checkpoint (wave 4)
+- [x] 03-01-PLAN.md — Type contracts (game.types.ts) + PathExtractor (wave 1)
+- [x] 03-02-PLAN.md — GameState factory + UnitSystem + WaveController (wave 2)
+- [x] 03-03-PLAN.md — BuildingSystem + ProjectileSystem + ResourceSystem (wave 2, parallel)
+- [x] 03-04-PLAN.md — CombatSystem + win/loss conditions (wave 3)
+- [x] 03-05-PLAN.md — GameRenderer + HudOverlay extensions (wave 3, parallel)
+- [x] 03-06-PLAN.md — Wire all systems into main.ts + human verification checkpoint (wave 4)
 
 ### Phase 4: Boss — Negotiation Mechanic
 **Goal**: Босс появляется на поле как особый юнит. Игрок видит диалог-переговоры. Два исхода: договорились (босс уходит, игрок получает баффы) или провал (босс злой, призывает орду юнитов).
@@ -87,6 +109,8 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Map & Runtime Foundation | 1/1 | Complete | 2026-03-17 |
 | 2. Menu & Network Architecture | 6/6 | Complete   | 2026-03-17 |
+| 02.1. Menu and UX refresh | 0/0 | Planning | - |
+| 02.2. In-game menu and overlay UX | 2/3 | Human verification | - |
 | 3. Units, Buildings & Combat | 6/6 | Complete   | 2026-03-17 |
 | 4. Boss — Negotiation Mechanic | 0/TBD | Not started | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |

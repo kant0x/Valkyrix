@@ -144,3 +144,23 @@ describe('WalletService - accountChanged', () => {
     expect(getCurrentState().publicKey).toBeNull();
   });
 });
+
+describe('WalletService - restoreWalletSession', () => {
+  it('restores a previously connected provider from injected wallet state', async () => {
+    const mockProvider = {
+      isPhantom: true,
+      publicKey: { toString: () => 'restored-key' },
+      isConnected: true,
+      connect: vi.fn().mockResolvedValue({ publicKey: { toString: () => 'restored-key' } }),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+      signAndSendTransaction: vi.fn(),
+    };
+    (window as unknown as Record<string, unknown>).phantom = { solana: mockProvider };
+    const { restoreWalletSession } = await import('./WalletService');
+    const state = restoreWalletSession();
+    expect(state.connected).toBe(true);
+    expect(state.publicKey).toBe('restored-key');
+    expect(state.walletType).toBe('phantom');
+  });
+});

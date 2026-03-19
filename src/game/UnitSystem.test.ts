@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { UnitSystem } from './UnitSystem';
+import { UnitSystem } from './UnitSystemRuntime';
 import type { GameState, Unit, PathNode, UnitDef } from './game.types';
 
 // ---- helpers ----
@@ -64,6 +64,7 @@ function makeState(units: Unit[], pathNodes: PathNode[]): GameState {
     resources: 100,
     nextId: 2,
     pathNodes,
+    enemyLaneOffsets: [0],
   };
 }
 
@@ -173,5 +174,53 @@ describe('UnitSystem', () => {
     // Reversed segment C→B: segLen=100, advance=70*1/100=0.7
     // wx = lerp(200, 100, 0.7) = 200 - 70 = 130
     expect(state.units[0].wx).toBeCloseTo(130, 0);
+  });
+  it('spreads spawned enemies across configured lane offsets', () => {
+    const path: PathNode[] = [
+      { wx: 100, wy: 100 },
+      { wx: 200, wy: 100 },
+      { wx: 300, wy: 100 },
+    ];
+    const state = makeState([], path);
+    state.enemyLaneOffsets = [-20, 0, 20];
+    state.spawnQueue = [
+      { defKey: 'light-enemy', delay: 0 },
+      { defKey: 'light-enemy', delay: 0 },
+      { defKey: 'light-enemy', delay: 0 },
+    ];
+
+    system.update(0.016, state);
+
+    expect(state.units.map((u) => Math.round(u.wx))).toEqual([100, 100, 100]);
+    expect(state.units.map((u) => Math.round(u.wy))).toEqual([100, 100, 100]);
+  });
+
+  it('fans enemies out across road width during the first segment after portal spawn', () => {
+    const path: PathNode[] = [
+      { wx: 100, wy: 100 },
+      { wx: 200, wy: 100 },
+      { wx: 300, wy: 100 },
+    ];
+    const state = makeState([], path);
+    state.enemyLaneOffsets = [-20, 0, 20];
+    state.spawnQueue = [
+      { defKey: 'light-enemy', delay: 0 },
+      { defKey: 'light-enemy', delay: 0 },
+      { defKey: 'light-enemy', delay: 0 },
+    ];
+
+    system.update(0.016, state);
+    system.update(0.5, state);
+
+    const ys = state.units.map((u) => u.wy);
+    const xs = state.units.map((u) => u.wx);
+
+    // They still advance toward citadel along the segment...
+    expect(xs.every((x) => x > 120)).toBe(true);
+    expect(xs.every((x) => x < 170)).toBe(true);
+
+    // ...but with a softer, not-perfectly-aligned lateral spread.
+    expect(new Set(ys.map((y) => Math.round(y))).size).toBeGreaterThan(1);
+    expect(ys.every((y) => y > 84 && y < 116)).toBe(true);
   });
 });

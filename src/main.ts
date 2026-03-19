@@ -9,14 +9,16 @@ import {
     type CameraPoint,
     type CameraScrollBounds,
 } from './shared/CameraMath';
+import { GAME_H, GAME_MODE_TOP_BAR_HEIGHT, GAME_VIEW_H, GAME_W, HUD_HEIGHT } from './shared/RuntimeViewport';
 import { ScreenManager } from './screens/ScreenManager';
-import { WalletSplashScreen } from './screens/WalletSplashScreen';
-import { MainMenuScreen } from './screens/MainMenuScreen';
+import { ValkyrixWalletSplashScreen } from './screens/ValkyrixWalletSplashScreen';
+import { ValkyrixMainMenuScreen } from './screens/ValkyrixMainMenuScreen';
 import { EscMenuOverlay } from './screens/EscMenuOverlay';
 import { HudOverlay } from './screens/HudOverlay';
+import { restoreWalletSession } from './wallet/WalletService';
 import { createGameState } from './game/GameState';
 import { WaveController } from './game/WaveController';
-import { UnitSystem } from './game/UnitSystem';
+import { UnitSystem } from './game/UnitSystemRuntime';
 import { BuildingSystem, canvasClickToTile } from './game/BuildingSystem';
 import { ProjectileSystem } from './game/ProjectileSystem';
 import { CombatSystem } from './game/CombatSystem';
@@ -72,6 +74,23 @@ type WorldItem = {
     w?: number;
     h?: number;
     name?: string;
+    template?: string;
+    fileName?: string;
+    asset?: string;
+    ax?: number;
+    ay?: number;
+    rot?: number;
+    tilesW?: number;
+    tilesH?: number;
+};
+
+type WorldItemTemplate = {
+    name?: string;
+    fileName?: string;
+    template?: string;
+    asset?: string;
+    w?: number;
+    h?: number;
 };
 
 type RuntimeMap = {
@@ -85,8 +104,11 @@ type RuntimeMap = {
     layers?: Partial<Record<LayerName, number[]>>;
     camera?: MapCamera;
     scene?: MapScene;
+    buildingTemplates?: WorldItemTemplate[];
     buildings?: WorldItem[];
+    obstacleTemplates?: WorldItemTemplate[];
     obstacles?: WorldItem[];
+    graphicTemplates?: WorldItemTemplate[];
     graphics?: WorldItem[];
 };
 
@@ -113,11 +135,6 @@ type RuntimeState = {
     images: Map<string, ImageEntry>;
 };
 
-const GAME_W = 1280;
-const GAME_H = 720;
-const TOP_BAR_HEIGHT = 42;
-const HUD_HEIGHT = 172;
-const GAME_VIEW_H = GAME_H - TOP_BAR_HEIGHT - HUD_HEIGHT;
 const ISO_LAYER_X = 1152;
 const ISO_LAYER_Y = 0;
 const TILE_LAYERS: LayerName[] = ['ground', 'decor'];
@@ -150,7 +167,7 @@ let runtime: RuntimeState = {
     zoom: 1,
     status: 'Loading map...',
     error: null,
-    showDebugMasks: true,
+    showDebugMasks: false,
     lastFrameMs: performance.now(),
     dragging: false,
     dragX: 0,
@@ -184,30 +201,21 @@ class GameScreen {
         container.innerHTML = `
     <div class="vk-app">
         <section class="vk-shell">
-            <header class="vk-topbar">
-                <div>
-                    <p class="vk-kicker">Valkyrix Runtime</p>
-                    <h1 class="vk-title" id="vk-map-label">Loading active-map.json...</h1>
-                </div>
-                <div class="vk-chip" id="vk-mode-chip">camera</div>
-            </header>
             <div class="vk-viewport-frame">
                 <canvas id="vk-canvas"></canvas>
                 <div class="vk-overlay">
-                    <div class="vk-overlay-line" id="vk-status">Loading map...</div>
-                    <div class="vk-overlay-line">WASD / arrows move camera, drag with mouse, F resets start, R reloads map, V toggles debug masks.</div>
+                    <div class="vk-overlay-topline">
+                        <div class="vk-overlay-line" id="vk-status">Loading map...</div>
+                        <div class="vk-chip" id="vk-mode-chip">camera</div>
+                    </div>
+                    <div class="vk-runtime-hidden" aria-hidden="true">
+                        <h1 id="vk-map-label">Loading active-map.json...</h1>
+                        <pre id="vk-map-stats">booting...</pre>
+                        <pre id="vk-camera-stats">booting...</pre>
+                    </div>
                 </div>
             </div>
-            <footer class="vk-hud">
-                <section class="vk-panel">
-                    <h2>Map</h2>
-                    <pre id="vk-map-stats">booting...</pre>
-                </section>
-                <section class="vk-panel">
-                    <h2>Camera</h2>
-                    <pre id="vk-camera-stats">booting...</pre>
-                </section>
-            </footer>
+            <footer id="vk-runtime-hud-slot" class="vk-runtime-hud-slot"></footer>
         </section>
     </div>
 `;
@@ -236,7 +244,7 @@ class GameScreen {
             zoom: 1,
             status: 'Loading map...',
             error: null,
-            showDebugMasks: true,
+            showDebugMasks: false,
             lastFrameMs: performance.now(),
             dragging: false,
             dragX: 0,
@@ -257,34 +265,36 @@ class GameScreen {
         this.escMenu.mount(container);
 
         this.hud = new HudOverlay();
-        this.hud.mount(container);
+        this.hud.mount(getRequiredElement('vk-app').querySelector('.vk-shell') as HTMLElement);
         gameScreenHudRef = this.hud;
 
-        // Add tower selection buttons to the HUD container (Phase 3)
-        const btnAttack = document.createElement('button');
-        btnAttack.id = 'btn-attack-tower';
-        btnAttack.textContent = 'Attack Tower (50\u26A1)';
-        btnAttack.style.cssText = 'position:absolute;bottom:180px;left:14px;padding:8px 14px;background:#c0392b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;z-index:100;';
-        container.appendChild(btnAttack);
-
-        const btnBuff = document.createElement('button');
-        btnBuff.id = 'btn-buff-tower';
-        btnBuff.textContent = 'Buff Tower (40\u26A1)';
-        btnBuff.style.cssText = 'position:absolute;bottom:180px;left:180px;padding:8px 14px;background:#2980b9;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;z-index:100;';
-        container.appendChild(btnBuff);
-
         selectedTowerType = null;
-
-        btnAttack.addEventListener('click', () => {
-            selectedTowerType = selectedTowerType === 'attack' ? null : 'attack';
-            btnAttack.style.outline = selectedTowerType === 'attack' ? '2px solid #fff' : 'none';
-            btnBuff.style.outline = 'none';
-        });
-
-        btnBuff.addEventListener('click', () => {
-            selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
-            btnBuff.style.outline = selectedTowerType === 'buff' ? '2px solid #fff' : 'none';
-            btnAttack.style.outline = 'none';
+        this.hud.setBuildSelection(selectedTowerType);
+        this.hud.setCommandCallbacks({
+          attack: () => {
+                selectedTowerType = selectedTowerType === 'attack' ? null : 'attack';
+                this.hud?.setBuildSelection(selectedTowerType);
+                this.hud?.setCommandMessage(
+                    selectedTowerType === 'attack'
+                        ? 'Attack Tower selected. Now click a highlighted build tile on the map.'
+                        : 'Attack Tower deselected.',
+                );
+            },
+            buff: () => {
+                selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
+                this.hud?.setBuildSelection(selectedTowerType);
+                this.hud?.setCommandMessage(
+                    selectedTowerType === 'buff'
+                        ? 'Buff Tower selected. Now click a highlighted build tile on the map.'
+                        : 'Buff Tower deselected.',
+                );
+            },
+            stagedUnitA: () => {
+                this.hud?.setCommandMessage('Viking is already present in combat data. This right-side slot is the future training hook.');
+            },
+            stagedUnitB: () => {
+                this.hud?.setCommandMessage('Collector slot is prepared in the HUD, but training is not wired yet.');
+            },
         });
 
         // Canvas click handler for tower placement
@@ -302,7 +312,25 @@ class GameScreen {
                 map.tileWidth,
                 map.tileHeight,
             );
-            buildingSystem?.placeBuilding(selectedTowerType, col, row, zoneLayer as number[], map.width, gameState);
+            const placed = buildingSystem?.placeBuilding(
+                selectedTowerType,
+                col,
+                row,
+                zoneLayer as number[],
+                map.width,
+                gameState,
+            ) ?? false;
+            const placedType = selectedTowerType;
+            runtime.status = placed
+                ? `${placedType === 'attack' ? 'Attack' : 'Buff'} tower placed at ${col},${row}.`
+                : `Cannot place ${placedType} tower at ${col},${row}.`;
+            if (placed) {
+                this.hud?.setCommandMessage(placedType === 'attack' ? 'Attack Tower placed. Choose another tower or keep defending.' : 'Support Tower placed. Choose another tower or keep defending.');
+                selectedTowerType = null;
+                this.hud?.setBuildSelection(null);
+            } else {
+                this.hud?.setCommandMessage('Cannot build here. Click a valid highlighted tile and make sure you have enough energy.');
+            }
         };
         canvas.addEventListener('click', towerClickHandler);
     }
@@ -318,10 +346,6 @@ class GameScreen {
             canvas?.removeEventListener('click', towerClickHandler);
             towerClickHandler = null;
         }
-
-        // Remove tower buttons
-        document.getElementById('btn-attack-tower')?.remove();
-        document.getElementById('btn-buff-tower')?.remove();
 
         // Clear Phase 3 game systems to allow GC
         gameState = null;
@@ -349,8 +373,8 @@ if (!appContainer) {
 
 let screenManager: ScreenManager;
 
-const walletScreen = new WalletSplashScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
-const menuScreen = new MainMenuScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
+const walletScreen = new ValkyrixWalletSplashScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
+const menuScreen = new ValkyrixMainMenuScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
 const gameScreen = new GameScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
 
 screenManager = new ScreenManager(appContainer, {
@@ -359,7 +383,8 @@ screenManager = new ScreenManager(appContainer, {
     game: gameScreen,
 });
 
-screenManager.navigateTo('wallet');
+const initialWalletState = restoreWalletSession();
+screenManager.navigateTo(initialWalletState.connected ? 'menu' : 'wallet');
 
 function ensureRuntimeStyle(): void {
     if (document.getElementById(STYLE_ID)) return;
@@ -391,7 +416,7 @@ function ensureRuntimeStyle(): void {
             width: min(calc(100vw - 36px), calc((100vh - 36px) * ${GAME_W} / ${GAME_H}));
             aspect-ratio: ${GAME_W} / ${GAME_H};
             display: grid;
-            grid-template-rows: ${TOP_BAR_HEIGHT}px 1fr ${HUD_HEIGHT}px;
+            grid-template-rows: 1fr ${HUD_HEIGHT}px;
             border: 1px solid rgba(151, 194, 235, 0.18);
             border-radius: 22px;
             overflow: hidden;
@@ -402,44 +427,15 @@ function ensureRuntimeStyle(): void {
                 0 28px 60px rgba(0, 0, 0, 0.45),
                 inset 0 0 0 1px rgba(255, 255, 255, 0.03);
         }
-        .vk-topbar, .vk-hud {
-            position: relative;
-            z-index: 2;
-            background:
-                linear-gradient(180deg, rgba(10, 19, 30, 0.98), rgba(8, 13, 21, 0.96));
-        }
-        .vk-topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            padding: 8px 18px;
-            border-bottom: 1px solid rgba(120, 171, 214, 0.12);
-        }
-        .vk-kicker {
-            margin: 0;
-            font-size: 11px;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            color: #8fb9de;
-        }
-        .vk-title {
-            margin: 1px 0 0;
-            font-size: 18px;
-            line-height: 1.1;
-            color: #edf5ff;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
         .vk-chip {
             padding: 7px 12px;
             border-radius: 999px;
             border: 1px solid rgba(126, 190, 240, 0.24);
-            background: rgba(34, 57, 84, 0.72);
+            background: rgba(10, 20, 32, 0.74);
             color: #cde7ff;
-            font-size: 12px;
+            font-size: 11px;
             white-space: nowrap;
+            backdrop-filter: blur(6px);
         }
         .vk-viewport-frame {
             position: relative;
@@ -462,12 +458,18 @@ function ensureRuntimeStyle(): void {
             pointer-events: none;
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
+            justify-content: flex-start;
             padding: 12px 14px;
+        }
+        .vk-overlay-topline {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
         }
         .vk-overlay-line {
             align-self: flex-start;
-            max-width: min(100%, 820px);
+            max-width: min(100%, 480px);
             padding: 7px 10px;
             border-radius: 12px;
             background: rgba(5, 9, 15, 0.68);
@@ -477,34 +479,15 @@ function ensureRuntimeStyle(): void {
             line-height: 1.4;
             backdrop-filter: blur(6px);
         }
-        .vk-hud {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-            padding: 12px 14px 14px;
-            border-top: 1px solid rgba(120, 171, 214, 0.12);
+        .vk-runtime-hidden {
+            display: none;
         }
-        .vk-panel {
-            min-width: 0;
-            padding: 12px 14px;
-            border-radius: 16px;
-            background: rgba(6, 11, 18, 0.9);
-            border: 1px solid rgba(132, 185, 228, 0.12);
-        }
-        .vk-panel h2 {
-            margin: 0 0 8px;
-            font-size: 11px;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: #8fb9de;
-        }
-        .vk-panel pre {
-            margin: 0;
-            white-space: pre-wrap;
-            font-family: Consolas, "Courier New", monospace;
-            font-size: 12px;
-            line-height: 1.45;
-            color: #d7e4f4;
+        .vk-runtime-hud-slot {
+            position: relative;
+            z-index: 2;
+            padding: 0;
+            background: rgba(3, 9, 22, 0.99);
+            border-top: 1px solid rgba(40, 100, 200, 0.35);
         }
         @media (max-width: 960px) {
             .vk-app { padding: 10px; }
@@ -512,15 +495,12 @@ function ensureRuntimeStyle(): void {
                 width: min(calc(100vw - 20px), calc((100vh - 20px) * ${GAME_W} / ${GAME_H}));
                 border-radius: 18px;
             }
-            .vk-hud {
-                gap: 8px;
-                padding: 10px;
+            .vk-overlay-topline {
+                flex-direction: column;
+                align-items: flex-start;
             }
-            .vk-panel {
-                padding: 10px 12px;
-            }
-            .vk-panel pre {
-                font-size: 11px;
+            .vk-runtime-hud-slot {
+                padding: 8px;
             }
         }
     `;
@@ -623,6 +603,7 @@ async function loadMap(showReloadStatus = false): Promise<void> {
         runtime.cameraCenter = getStartCenter(parsed);
         runtime.images.clear();
         primeTileImages(parsed);
+        primeWorldItemImages(parsed);
         runtime.status = showReloadStatus ? 'Map reloaded from active-map.json.' : 'Map loaded.';
 
         // Initialize Phase 3 game systems after map is loaded
@@ -712,12 +693,18 @@ function update(dt: number): void {
 
     // HUD update with live game data
     if (gameState) {
-        // Access hud via the module-level gameScreenRef
+        gameScreenHudRef?.setActionAvailability({ attack: gameState.resources >= 50, buff: gameState.resources >= 40 });
         gameScreenHudRef?.update({
             wave: gameState.waveNumber,
             health: gameState.citadelHp,
             citadelMaxHp: gameState.citadelMaxHp,
             resources: gameState.resources,
+            armedAction: selectedTowerType,
+            waveTimer: gameState.waveTimer,
+            enemiesAlive: gameState.units.filter(u => u.faction === 'enemy').length,
+            enemiesQueued: gameState.spawnQueue.length,
+            alliesAlive: gameState.units.filter(u => u.faction === 'ally').length,
+            towerCount: gameState.buildings.length,
         });
 
         // Win/loss detection — show overlay once
@@ -751,11 +738,11 @@ function render(): void {
 
     drawBackdrop();
     drawTiles(runtime.map);
-    drawSceneRail(runtime.map);
-    drawSceneMarkers(runtime.map);
-    drawWorldItems(runtime.map.graphics, '#8ee8ff');
-    drawWorldItems(runtime.map.obstacles, '#ffb56d');
-    drawWorldItems(runtime.map.buildings, '#95f2af');
+    if (runtime.showDebugMasks) {
+        drawSceneRail(runtime.map);
+        drawSceneMarkers(runtime.map);
+    }
+    drawWorldItems(runtime.map);
     drawCameraFocus(runtime.map);
 
     // Phase 3: render game entities (units, buildings, projectiles) on top of tile map
@@ -933,18 +920,147 @@ function drawMarker(x: number, y: number, radius: number, color: string, label: 
     ctx.restore();
 }
 
-function drawWorldItems(items: WorldItem[] | undefined, color: string): void {
-    if (!items || items.length === 0) return;
-    ctx.save();
-    ctx.fillStyle = color;
-    for (const item of items) {
+function drawWorldItems(map: RuntimeMap): void {
+    const combined = [
+        ...collectWorldItems(map.buildings, map.buildingTemplates, 'buildings', '#95f2af'),
+        ...collectWorldItems(map.obstacles, map.obstacleTemplates, 'objects', '#ffb56d'),
+        ...collectWorldItems(map.graphics, map.graphicTemplates, 'graphics', '#8ee8ff'),
+    ].sort((a, b) => ((a.item.y ?? 0) - (b.item.y ?? 0)));
+
+    if (combined.length === 0) return;
+
+    for (const entry of combined) {
+        const item = entry.item;
         if (!Number.isFinite(item.x) || !Number.isFinite(item.y)) continue;
+
         const screen = worldToScreen(item.x ?? 0, item.y ?? 0);
-        const width = Math.max(8, Math.min(34, (item.w ?? 22) * runtime.zoom * 0.16));
-        const height = Math.max(8, Math.min(34, (item.h ?? 22) * runtime.zoom * 0.16));
-        ctx.fillRect(screen.x - width / 2, screen.y - height / 2, width, height);
+        const size = getWorldItemDrawSize(map, item);
+        const width = Math.max(12, Math.round(size.width * runtime.zoom));
+        const height = Math.max(12, Math.round(size.height * runtime.zoom));
+        const anchorX = typeof item.ax === 'number' ? item.ax : 0.5;
+        const anchorY = typeof item.ay === 'number' ? item.ay : 1;
+        const drawX = screen.x - width * anchorX;
+        const drawY = screen.y - height * anchorY;
+        const image = entry.asset ? ensureRuntimeImage(entry.asset) : null;
+
+        if (image?.ready) {
+            const frame = getRuntimeImageFrame(image.img, entry.asset, item, entry.kind);
+            ctx.save();
+            if (item.rot) {
+                const pivotX = screen.x;
+                const pivotY = screen.y;
+                ctx.translate(pivotX, pivotY);
+                ctx.rotate((item.rot * Math.PI) / 180);
+                ctx.drawImage(
+                    image.img,
+                    frame.sx,
+                    frame.sy,
+                    frame.sw,
+                    frame.sh,
+                    -width * anchorX,
+                    -height * anchorY,
+                    width,
+                    height,
+                );
+            } else {
+                ctx.drawImage(image.img, frame.sx, frame.sy, frame.sw, frame.sh, drawX, drawY, width, height);
+            }
+            ctx.restore();
+            continue;
+        }
+
+        ctx.save();
+        ctx.fillStyle = entry.color;
+        ctx.fillRect(drawX, drawY, width, height);
+        ctx.strokeStyle = 'rgba(5, 9, 15, 0.8)';
+        ctx.strokeRect(drawX, drawY, width, height);
+        ctx.restore();
     }
-    ctx.restore();
+}
+
+function getWorldItemDrawSize(map: RuntimeMap, item: WorldItem): { width: number; height: number } {
+    const tilesW = Number(item.tilesW) || 0;
+    const tilesH = Number(item.tilesH) || 0;
+    if (tilesW > 0 || tilesH > 0) {
+        const base = Math.max(1, map.tileWidth || 64);
+        return {
+            width: Math.max(1, (tilesW || 1) * base),
+            height: Math.max(1, (tilesH || 1) * base),
+        };
+    }
+    return {
+        width: Math.max(1, item.w ?? 64),
+        height: Math.max(1, item.h ?? 64),
+    };
+}
+
+function getRuntimeImageFrame(
+    img: HTMLImageElement,
+    asset = '',
+    item?: WorldItem,
+    kind?: 'buildings' | 'objects' | 'graphics',
+): { sx: number; sy: number; sw: number; sh: number } {
+    const atlas = getSquareAtlasLayout(img);
+    if (atlas) {
+        const animKind = getAnimatedWorldItemKind(asset, item);
+        const shouldAnimate = !!animKind || kind === 'graphics';
+        const fps = animKind === 'citadel' ? 8 : animKind === 'port' ? 10 : 8;
+        const frameIndex = shouldAnimate ? Math.floor((Date.now() / 1000) * fps) % atlas.totalFrames : 0;
+        return atlasFrameRect(atlas, frameIndex);
+    }
+    return { sx: 0, sy: 0, sw: img.width, sh: img.height };
+}
+
+function getSquareAtlasLayout(img: HTMLImageElement): { frameSize: number; cols: number; rows: number; totalFrames: number } | null {
+    const width = Math.max(0, img.width || img.naturalWidth || 0);
+    const height = Math.max(0, img.height || img.naturalHeight || 0);
+    if (!width || !height) return null;
+
+    const frameSize = gcd(width, height);
+    if (!frameSize) return null;
+
+    const cols = Math.floor(width / frameSize);
+    const rows = Math.floor(height / frameSize);
+    if (cols < 1 || rows < 1) return null;
+    if (cols * frameSize !== width || rows * frameSize !== height) return null;
+
+    const totalFrames = cols * rows;
+    if (totalFrames <= 1) return null;
+
+    return { frameSize, cols, rows, totalFrames };
+}
+
+function atlasFrameRect(
+    atlas: { frameSize: number; cols: number; rows: number; totalFrames: number },
+    frameIndex: number,
+): { sx: number; sy: number; sw: number; sh: number } {
+    const safeIndex = ((frameIndex % atlas.totalFrames) + atlas.totalFrames) % atlas.totalFrames;
+    const col = safeIndex % atlas.cols;
+    const row = Math.floor(safeIndex / atlas.cols);
+    return {
+        sx: col * atlas.frameSize,
+        sy: row * atlas.frameSize,
+        sw: atlas.frameSize,
+        sh: atlas.frameSize,
+    };
+}
+
+function gcd(a: number, b: number): number {
+    let x = Math.abs(Math.round(a));
+    let y = Math.abs(Math.round(b));
+    while (y) {
+        const next = x % y;
+        x = y;
+        y = next;
+    }
+    return x;
+}
+
+function getAnimatedWorldItemKind(asset: string, item?: WorldItem): 'citadel' | 'port' | null {
+    const ref = `${String(item?.template || '')} ${String(item?.fileName || '')} ${String(item?.name || '')} ${asset}`.toLowerCase();
+    if (ref.includes('citadel')) return 'citadel';
+    if (ref.includes('portal') || /\bport\b/.test(ref)) return 'port';
+    return null;
 }
 
 function drawCameraFocus(map: RuntimeMap): void {
@@ -1032,7 +1148,7 @@ function getViewSize(zoom: number): { viewW: number; viewH: number } {
 function getRoadOffset(map: RuntimeMap, zoom: number): number {
     return computeRoadViewOffset(
         zoom,
-        TOP_BAR_HEIGHT,
+        GAME_MODE_TOP_BAR_HEIGHT,
         Number.isFinite(map.camera?.roadViewOffsetY) ? map.camera?.roadViewOffsetY ?? 0 : 0,
         (map.camera?.moveMode ?? 'free') === 'free',
         true,
@@ -1412,6 +1528,90 @@ function primeTileImages(map: RuntimeMap): void {
             if (gid > 0) ensureTileImage(map, gid);
         }
     }
+}
+
+function primeWorldItemImages(map: RuntimeMap): void {
+    const entries = [
+        ...collectWorldItems(map.buildings, map.buildingTemplates, 'buildings', '#95f2af'),
+        ...collectWorldItems(map.obstacles, map.obstacleTemplates, 'objects', '#ffb56d'),
+        ...collectWorldItems(map.graphics, map.graphicTemplates, 'graphics', '#8ee8ff'),
+    ];
+    for (const entry of entries) {
+        if (entry.asset) ensureRuntimeImage(entry.asset);
+    }
+}
+
+function ensureRuntimeImage(ref: string): ImageEntry | null {
+    const path = normalizeAssetPath(ref);
+    if (!path) return null;
+    const cached = runtime.images.get(path);
+    if (cached) return cached;
+    const img = new Image();
+    const entry: ImageEntry = { img, ready: false, failed: false };
+    runtime.images.set(path, entry);
+    img.onload = () => {
+        entry.ready = true;
+    };
+    img.onerror = () => {
+        entry.failed = true;
+    };
+    img.src = toAssetUrl(path);
+    return entry;
+}
+
+function collectWorldItems(
+    items: WorldItem[] | undefined,
+    templates: WorldItemTemplate[] | undefined,
+    kind: 'buildings' | 'objects' | 'graphics',
+    color: string,
+): Array<{ item: WorldItem; asset: string; color: string; kind: 'buildings' | 'objects' | 'graphics' }> {
+    if (!items || items.length === 0) return [];
+    const templateMap = new Map<string, WorldItemTemplate>();
+    for (const template of templates ?? []) {
+        const keys = [template.fileName, template.template, template.name];
+        for (const key of keys) {
+            if (key) templateMap.set(String(key).toLowerCase(), template);
+        }
+    }
+
+    return items.map((item) => {
+        const key = String(item.template || item.fileName || item.name || '').toLowerCase();
+        const template = templateMap.get(key);
+        const asset = resolveWorldItemAsset(item, template, kind);
+        return { item, asset, color, kind };
+    });
+}
+
+function resolveWorldItemAsset(
+    item: WorldItem,
+    template: WorldItemTemplate | undefined,
+    kind: 'buildings' | 'objects' | 'graphics',
+): string {
+    const explicit = normalizeAssetPath(String(item.asset || template?.asset || ''));
+    if (explicit) return explicit;
+
+    const fileName = String(item.template || item.fileName || template?.fileName || template?.template || item.name || '').trim();
+    if (!fileName) return '';
+
+    const normalized = normalizeAssetPath(fileName);
+    if (normalized.includes('/')) return normalized;
+
+    const lowerFile = fileName.toLowerCase();
+    const candidates = kind === 'buildings'
+        ? [
+            ...(lowerFile.includes('citadel') ? [`assets/build/citadel/${fileName}`] : []),
+            ...(lowerFile.includes('port') ? [`assets/build/port/${fileName}`] : []),
+            `assets/build/${fileName}`,
+            `assets/build/citadel/${fileName}`,
+            `assets/build/port/${fileName}`,
+            `assets/structures/${fileName}`,
+            `assets/maps/${fileName}`,
+        ]
+        : kind === 'objects'
+            ? [`assets/objects/${fileName}`, `assets/ball/${fileName}`]
+            : [`assets/graphics/${fileName}`, `assets/Graphics/${fileName}`];
+
+    return candidates[0] ?? '';
 }
 
 function normalizeAssetPath(ref: string): string {
