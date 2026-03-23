@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 status: In Progress
-last_updated: "2026-03-23T14:49:58Z"
+last_updated: "2026-03-23T14:54:40Z"
 progress:
   total_phases: 7
   completed_phases: 3
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04
-**Current plan:** 04-01 complete (1/4 plans done)
+**Current plan:** 04-03 complete (3/4 plans done)
 **Status:** In Progress
 
 ## Session Log
@@ -43,6 +43,7 @@ See: .planning/PROJECT.md
 - 2026-03-21: Phase 02.2 human verification approved; 02.2-03 summary created and Phase 02.2 marked complete
 - 2026-03-23: Phase 03 (Units, Buildings & Combat) marked complete; advancing to Phase 04
 - 2026-03-23: Phase 04 plan 04-01 complete — negotiation phase types + UnitSystem boss-freeze guard
+- 2026-03-23: Phase 04 plan 04-03 complete — NegotiationOverlay DOM modal with full jsdom test coverage
 
 ## Accumulated Context
 
@@ -55,3 +56,5 @@ See: .planning/PROJECT.md
 
 - Phase 04-01: Boss-freeze guard placed per-unit (not top-level) to preserve collector orbiting during negotiation
 - Phase 04-01: BossNegotiationState.triggered field prevents re-fire within a session
+- Phase 04-03: Overlay appends to document.body (not container param) following HudOverlay.showWinLossOverlay idiom
+- Phase 04-03: Inline style injection with STYLE_ID guard prevents duplicate styles on remount
