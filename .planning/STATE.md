@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 status: In Progress
-last_updated: "2026-03-23T14:54:40Z"
+last_updated: "2026-03-23T14:54:24Z"
 progress:
   total_phases: 7
   completed_phases: 3
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md
 
 **Milestone:** v1.0 milestone
 **Current phase:** 04
-**Current plan:** 04-03 complete (3/4 plans done)
+**Current plan:** 04-02 complete (plans 01+02+03 done, 3/4 plans done)
 **Status:** In Progress
 
 ## Session Log
@@ -44,6 +44,7 @@ See: .planning/PROJECT.md
 - 2026-03-23: Phase 03 (Units, Buildings & Combat) marked complete; advancing to Phase 04
 - 2026-03-23: Phase 04 plan 04-01 complete — negotiation phase types + UnitSystem boss-freeze guard
 - 2026-03-23: Phase 04 plan 04-03 complete — NegotiationOverlay DOM modal with full jsdom test coverage
+- 2026-03-23: Phase 04 plan 04-02 complete — BossSystem negotiation state machine (detection, success, failure, horde, forceReset)
 
 ## Accumulated Context
 
@@ -58,3 +59,5 @@ See: .planning/PROJECT.md
 - Phase 04-01: BossNegotiationState.triggered field prevents re-fire within a session
 - Phase 04-03: Overlay appends to document.body (not container param) following HudOverlay.showWinLossOverlay idiom
 - Phase 04-03: Inline style injection with STYLE_ID guard prevents duplicate styles on remount
+- Phase 04-02: boss.def spread-replace on enrage preserves UNIT_DEFS constant from mutation
+- Phase 04-02: Horde pushed in composition order (light→heavy→ranged) with flat 0.4s delay step starting at 1.0s
