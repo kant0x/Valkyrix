@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 02.2
-status: Human Verification
-last_updated: "2026-03-18T20:00:00.000Z"
+current_phase: 04
+status: In Progress
+last_updated: "2026-03-23T14:49:58Z"
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 16
-  completed_plans: 15
+  total_plans: 20
+  completed_plans: 17
 ---
 
 # Session State
@@ -21,8 +21,9 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 02.2
-**Status:** Human Verification
+**Current phase:** 04
+**Current plan:** 04-01 complete (1/4 plans done)
+**Status:** In Progress
 
 ## Session Log
 
@@ -36,6 +37,12 @@ See: .planning/PROJECT.md
 - 2026-03-18: Phase 02.2 wave 1 complete - HudOverlay rebuilt into persistent bottom command bar with tests
 - 2026-03-18: Phase 02.2 wave 2 complete - main.ts now drives tower placement from the HUD instead of floating buttons
 - 2026-03-18: Phase 02.2 wave 3 code complete - ESC system overlay refreshed and awaiting human verification checkpoint
+- 2026-03-20: Phase 02.2 paused without completion; plan 02.2-03 remains pending for human verification and final sign-off
+- 2026-03-20: Active focus moved to Phase 03 while Phase 02.2 remains paused and unfinished
+- 2026-03-21: Phase 03 remains unaccepted; code exists, but human verification and actual gameplay sign-off are still pending
+- 2026-03-21: Phase 02.2 human verification approved; 02.2-03 summary created and Phase 02.2 marked complete
+- 2026-03-23: Phase 03 (Units, Buildings & Combat) marked complete; advancing to Phase 04
+- 2026-03-23: Phase 04 plan 04-01 complete — negotiation phase types + UnitSystem boss-freeze guard
 
 ## Accumulated Context
 
@@ -43,3 +50,8 @@ See: .planning/PROJECT.md
 
 - Phase 02.1 inserted after Phase 2: Menu and UX refresh (URGENT)
 - Phase 02.2 inserted after Phase 2: In-game menu and overlay UX (URGENT)
+
+### Key Decisions
+
+- Phase 04-01: Boss-freeze guard placed per-unit (not top-level) to preserve collector orbiting during negotiation
+- Phase 04-01: BossNegotiationState.triggered field prevents re-fire within a session
