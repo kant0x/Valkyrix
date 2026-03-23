@@ -8,7 +8,7 @@ Valkyrix v1 строится поэтапно: сначала фундамент
 
 - [x] **Phase 1: Map & Runtime Foundation** — Редактор карт, изометрический рендерер, экспорт/активация карты, система слоёв, камера. Всё готово.
 - [x] **Phase 2: Menu & Network Architecture** — Главное меню, как оно устроено, через что подключается, на какой сети работает. Лобби, комнаты, маршрутизация экранов. (completed 2026-03-17)
-- [x] **Phase 3: Units, Buildings & Combat** — Юниты (здоровье, движение по path, кто за что отвечает), здания и их баффы, базовая боёвка, волны врагов. (completed 2026-03-17)
+- [x] **Phase 3: Units, Buildings & Combat** — Юниты (здоровье, движение по path, кто за что отвечает), здания и их баффы, базовая боёвка, волны врагов.
 - [ ] **Phase 4: Boss — Negotiation Mechanic** — Босс выходит на поле; игрок может договориться с ним (он уходит → баффы) или провалить переговоры (он остаётся злой → призывает орду своих юнитов). Диалог, ИИ-мозг босса, реакции.
 - [ ] **Phase 5: Multiplayer & Blockchain Leaderboard** — Настоящий мультиплеер подключается, каждый убитый юнит = транзакция через MagicBlock, лидерборд привязан к блокчейну.
 
@@ -55,12 +55,13 @@ Plans:
 **Goal:** Turn the current passive HUD and emergency build buttons into a real in-match command layer: persistent bottom battle bar, compact ESC system overlay, and visually aligned result overlays.
 **Requirements**: GAME-02, BLDG-01, UI-02
 **Depends on:** Phase 2
-**Plans:** 2 complete, 1 pending human verification
+**Status**: Complete
+**Plans:** 3 complete
 
 Plans:
 - [x] 02.2-01-PLAN.md - Refactor HudOverlay into a bottom command bar with explicit battle-control APIs
 - [x] 02.2-02-PLAN.md - Wire main.ts to HUD-driven tower commands and remove floating build buttons
-- [ ] 02.2-03-PLAN.md - Refresh EscMenuOverlay as a compact system overlay and run human verification
+- [x] 02.2-03-PLAN.md - Refresh EscMenuOverlay as a compact system overlay and run human verification
 
 ### Phase 3: Units, Buildings & Combat
 **Goal**: Юниты ходят по authored paths, здания размещаются на карте и дают баффы, базовая боёвка работает, волны врагов запускаются.
@@ -71,15 +72,16 @@ Plans:
   2. Каждый тип юнита имеет определённое здоровье, скорость, роль.
   3. Здания размещаются в `zones`, у каждого есть механика баффа/атаки.
   4. Волны запускаются по таймеру/триггеру, игрок может проиграть или выиграть раунд.
-**Plans**: 6 complete
+**Status**: In Progress
+**Plans**: 6 implemented, human verification and acceptance pending
 
 Plans:
-- [x] 03-01-PLAN.md — Type contracts (game.types.ts) + PathExtractor (wave 1)
-- [x] 03-02-PLAN.md — GameState factory + UnitSystem + WaveController (wave 2)
-- [x] 03-03-PLAN.md — BuildingSystem + ProjectileSystem + ResourceSystem (wave 2, parallel)
-- [x] 03-04-PLAN.md — CombatSystem + win/loss conditions (wave 3)
-- [x] 03-05-PLAN.md — GameRenderer + HudOverlay extensions (wave 3, parallel)
-- [x] 03-06-PLAN.md — Wire all systems into main.ts + human verification checkpoint (wave 4)
+- [ ] 03-01-PLAN.md — Type contracts (game.types.ts) + PathExtractor (wave 1)
+- [ ] 03-02-PLAN.md — GameState factory + UnitSystem + WaveController (wave 2)
+- [ ] 03-03-PLAN.md — BuildingSystem + ProjectileSystem + ResourceSystem (wave 2, parallel)
+- [ ] 03-04-PLAN.md — CombatSystem + win/loss conditions (wave 3)
+- [ ] 03-05-PLAN.md — GameRenderer + HudOverlay extensions (wave 3, parallel)
+- [ ] 03-06-PLAN.md — Wire all systems into main.ts + human verification checkpoint (wave 4)
 
 ### Phase 4: Boss — Negotiation Mechanic
 **Goal**: Босс появляется на поле как особый юнит. Игрок видит диалог-переговоры. Два исхода: договорились (босс уходит, игрок получает баффы) или провал (босс злой, призывает орду юнитов).
@@ -90,7 +92,13 @@ Plans:
   2. Игроку показывается диалог-переговоры с несколькими вариантами ответа.
   3. Успешные переговоры: босс уходит, игрок получает конкретные баффы.
   4. Провал: босс остаётся злым, вызывает орду своих юнитов, боёвка усиливается.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Extend game.types.ts (negotiation phase, UnitDef.enraged, BossNegotiationState) + UnitSystem boss-freeze guard (wave 1)
+- [ ] 04-02-PLAN.md — BossSystem: detection, success/failure outcomes, horde enqueue, forceReset (wave 2, TDD)
+- [ ] 04-03-PLAN.md — NegotiationOverlay: modal DOM class with two choice buttons (wave 2, TDD, parallel)
+- [ ] 04-04-PLAN.md — Wire BossSystem into main.ts rAF loop + human verification checkpoint (wave 3)
 
 ### Phase 5: Multiplayer & Blockchain Leaderboard
 **Goal**: Настоящий мультиплеер запущен, каждый убитый юнит — транзакция через MagicBlock, лидерборд хранится на блокчейне и отображается в игре.
@@ -110,7 +118,7 @@ Plans:
 | 1. Map & Runtime Foundation | 1/1 | Complete | 2026-03-17 |
 | 2. Menu & Network Architecture | 6/6 | Complete   | 2026-03-17 |
 | 02.1. Menu and UX refresh | 0/0 | Planning | - |
-| 02.2. In-game menu and overlay UX | 2/3 | Human verification | - |
-| 3. Units, Buildings & Combat | 6/6 | Complete   | 2026-03-17 |
-| 4. Boss — Negotiation Mechanic | 0/TBD | Not started | - |
+| 02.2. In-game menu and overlay UX | 3/3 | Complete | 2026-03-21 |
+| 3. Units, Buildings & Combat | 6/6 implemented | In Progress | - |
+| 4. Boss — Negotiation Mechanic | 0/4 | Planned | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |
