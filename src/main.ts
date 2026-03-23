@@ -9,21 +9,28 @@ import {
     type CameraPoint,
     type CameraScrollBounds,
 } from './shared/CameraMath';
-import { GAME_H, GAME_MODE_TOP_BAR_HEIGHT, GAME_VIEW_H, GAME_W, HUD_HEIGHT } from './shared/RuntimeViewport';
+import { GAME_MODE_TOP_BAR_HEIGHT, GAME_VIEW_H, GAME_W } from './shared/RuntimeViewport';
 import { ScreenManager } from './screens/ScreenManager';
+import { GameScreen } from './screens/GameScreen';
+import { GameSidePanelController } from './screens/GameSidePanel';
+import type { GameViewportLayoutRefs } from './screens/GameViewportLayout';
 import { ValkyrixWalletSplashScreen } from './screens/ValkyrixWalletSplashScreen';
 import { ValkyrixMainMenuScreen } from './screens/ValkyrixMainMenuScreen';
-import { EscMenuOverlay } from './screens/EscMenuOverlay';
 import { HudOverlay } from './screens/HudOverlay';
-import { restoreWalletSession } from './wallet/WalletService';
+import { tryAutoConnect } from './wallet/WalletService';
 import { createGameState } from './game/GameState';
 import { WaveController } from './game/WaveController';
 import { UnitSystem } from './game/UnitSystemRuntime';
-import { BuildingSystem, canvasClickToTile } from './game/BuildingSystem';
+import { BuildingSystem, canvasClickToTile, canvasPointToWorld, isWorldPointInsideTile } from './game/BuildingSystem';
 import { ProjectileSystem } from './game/ProjectileSystem';
 import { CombatSystem } from './game/CombatSystem';
 import { GameRenderer } from './game/GameRenderer';
+import { ResourceSystem } from './game/ResourceSystem';
+import { canRecruitUnit, recruitUnit } from './game/RecruitmentSystem';
+import { drawCitadelAura, drawCitadelEnergyFlow, drawCitadelOrbitingSwarm } from './rendering/BuildingEffects';
+import { UNIT_DEFS } from './game/game.types';
 import type { GameState } from './game/game.types';
+import { BossSystem } from './game/BossSystem';
 
 type LayerName = 'ground' | 'paths' | 'cam' | 'zones' | 'decor' | 'citadel' | 'spawn';
 
@@ -131,6 +138,7 @@ type RuntimeState = {
     dragging: boolean;
     dragX: number;
     dragY: number;
+    hoverBuildTile: { col: number; row: number } | null;
     keys: Set<string>;
     images: Map<string, ImageEntry>;
 };
@@ -146,8 +154,6 @@ const MASK_LAYER_COLORS: Record<Exclude<LayerName, 'ground' | 'decor'>, string> 
     spawn: 'rgba(255, 92, 92, 0.28)',
 };
 const MOVE_SPEED = 720;
-const STYLE_ID = 'valkyrix-runtime-style';
-
 // Module-level references — initialized by GameScreen.mount()
 let mapLabelEl: HTMLHeadingElement;
 let modeChipEl: HTMLDivElement;
@@ -157,6 +163,8 @@ let cameraStatsEl: HTMLPreElement;
 let canvas: HTMLCanvasElement;
 let ctx: CanvasRenderingContext2D;
 let animating = false;
+let tickWorker: Worker | null = null;
+const sidePanel = new GameSidePanelController();
 
 // Runtime state — initialized by GameScreen.mount()
 let runtime: RuntimeState = {
@@ -172,6 +180,7 @@ let runtime: RuntimeState = {
     dragging: false,
     dragX: 0,
     dragY: 0,
+    hoverBuildTile: null,
     keys: new Set<string>(),
     images: new Map<string, ImageEntry>(),
 };
@@ -183,49 +192,82 @@ let unitSystem: UnitSystem | null = null;
 let buildingSystem: BuildingSystem | null = null;
 let projectileSystem: ProjectileSystem | null = null;
 let combatSystem: CombatSystem | null = null;
+let resourceSystem: ResourceSystem | null = null;
 let gameRenderer: GameRenderer | null = null;
+// Phase 4: BossSystem is a singleton that persists across game sessions
+const bossSystem = new BossSystem();
 let winLossShown = false;
-let selectedTowerType: 'attack' | 'buff' | null = null;
-let towerClickHandler: ((e: MouseEvent) => void) | null = null;
+let selectedTowerType: 'attack' | 'buff' | 'sell' | null = null;
 // HUD reference for Phase 3 live data updates (set by GameScreen.mount, cleared on unmount)
 let gameScreenHudRef: HudOverlay | null = null;
+let inputBound = false;
+let keydownHandler: ((event: KeyboardEvent) => void) | null = null;
+let keyupHandler: ((event: KeyboardEvent) => void) | null = null;
+let pointerDownHandler: ((event: PointerEvent) => void) | null = null;
+let pointerMoveHandler: ((event: PointerEvent) => void) | null = null;
+let pointerUpHandler: ((event: PointerEvent) => void) | null = null;
+let pointerCancelHandler: ((event: PointerEvent) => void) | null = null;
+let pointerLeaveHandler: (() => void) | null = null;
 
-class GameScreen {
+function syncCanvasCursor(): void {
+    if (!canvas) return;
+    canvas.style.cursor = selectedTowerType ? 'crosshair' : runtime.dragging ? 'grabbing' : 'grab';
+}
+
+function updateBuildHoverTile(clientX: number, clientY: number): void {
+    if (!selectedTowerType || selectedTowerType === 'sell' || !runtime.map) {
+        runtime.hoverBuildTile = null;
+        return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+    const { wx, wy } = canvasPointToWorld(localX, localY, canvas, runtime.cameraCenter, runtime.zoom);
+    const hoveredTile = runtime.hoverBuildTile;
+    if (
+        hoveredTile
+        && isWorldPointInsideTile(
+            wx,
+            wy,
+            hoveredTile.col,
+            hoveredTile.row,
+            runtime.map.tileWidth,
+            runtime.map.tileHeight,
+        )
+    ) {
+        return;
+    }
+    runtime.hoverBuildTile = canvasClickToTile(
+        localX,
+        localY,
+        canvas,
+        runtime.cameraCenter,
+        runtime.zoom,
+        runtime.map.tileWidth,
+        runtime.map.tileHeight,
+    );
+}
+
+/* Legacy GameScreen moved to src/screens/GameScreen.ts
     private escMenu: EscMenuOverlay | null = null;
     private hud: HudOverlay | null = null;
 
     constructor(private readonly manager: ScreenManager) {}
 
     mount(container: HTMLElement): void {
-        ensureRuntimeStyle();
-        container.innerHTML = `
-    <div class="vk-app">
-        <section class="vk-shell">
-            <div class="vk-viewport-frame">
-                <canvas id="vk-canvas"></canvas>
-                <div class="vk-overlay">
-                    <div class="vk-overlay-topline">
-                        <div class="vk-overlay-line" id="vk-status">Loading map...</div>
-                        <div class="vk-chip" id="vk-mode-chip">camera</div>
-                    </div>
-                    <div class="vk-runtime-hidden" aria-hidden="true">
-                        <h1 id="vk-map-label">Loading active-map.json...</h1>
-                        <pre id="vk-map-stats">booting...</pre>
-                        <pre id="vk-camera-stats">booting...</pre>
-                    </div>
-                </div>
-            </div>
-            <footer id="vk-runtime-hud-slot" class="vk-runtime-hud-slot"></footer>
-        </section>
-    </div>
-`;
-
-        mapLabelEl = getRequiredElement<HTMLHeadingElement>('vk-map-label');
-        modeChipEl = getRequiredElement<HTMLDivElement>('vk-mode-chip');
-        statusEl = getRequiredElement<HTMLDivElement>('vk-status');
-        mapStatsEl = getRequiredElement<HTMLPreElement>('vk-map-stats');
-        cameraStatsEl = getRequiredElement<HTMLPreElement>('vk-camera-stats');
-        canvas = getRequiredElement<HTMLCanvasElement>('vk-canvas');
+        const layout = mountGameViewportLayout(container);
+        mapLabelEl = layout.mapLabelEl;
+        modeChipEl = layout.modeChipEl;
+        statusEl = layout.statusEl;
+        mapStatsEl = layout.mapStatsEl;
+        cameraStatsEl = layout.cameraStatsEl;
+        canvas = layout.canvas;
+        sidePanel.bind({
+            killsEl: layout.sideKillsEl,
+            activeEl: layout.sideActiveEl,
+            waveEl: layout.sideWaveEl,
+            txListEl: layout.sideTxListEl,
+        });
 
         const rawCtx = canvas.getContext('2d');
         if (!rawCtx) {
@@ -249,11 +291,15 @@ class GameScreen {
             dragging: false,
             dragX: 0,
             dragY: 0,
+            hoverBuildTile: null,
             keys: new Set<string>(),
             images: new Map<string, ImageEntry>(),
         };
+        sidePanel.resetState();
+        sidePanel.startMagicBlockTxFeed();
 
         bindInput();
+        syncCanvasCursor();
         void loadMap();
         if (!animating) {
             animating = true;
@@ -265,14 +311,16 @@ class GameScreen {
         this.escMenu.mount(container);
 
         this.hud = new HudOverlay();
-        this.hud.mount(getRequiredElement('vk-app').querySelector('.vk-shell') as HTMLElement);
+        this.hud.mount(layout.hudSlotEl);
         gameScreenHudRef = this.hud;
 
         selectedTowerType = null;
         this.hud.setBuildSelection(selectedTowerType);
         this.hud.setCommandCallbacks({
-          attack: () => {
+            attack: () => {
                 selectedTowerType = selectedTowerType === 'attack' ? null : 'attack';
+                runtime.hoverBuildTile = null;
+                syncCanvasCursor();
                 this.hud?.setBuildSelection(selectedTowerType);
                 this.hud?.setCommandMessage(
                     selectedTowerType === 'attack'
@@ -282,6 +330,8 @@ class GameScreen {
             },
             buff: () => {
                 selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
+                runtime.hoverBuildTile = null;
+                syncCanvasCursor();
                 this.hud?.setBuildSelection(selectedTowerType);
                 this.hud?.setCommandMessage(
                     selectedTowerType === 'buff'
@@ -298,20 +348,16 @@ class GameScreen {
         });
 
         // Canvas click handler for tower placement
-        towerClickHandler = (e: MouseEvent) => {
+        towerClickHandler = (_e: MouseEvent) => {
             if (!selectedTowerType || !gameState || !runtime.map) return;
-            const rect = canvas.getBoundingClientRect();
             const map = runtime.map;
             const zoneLayer = map.layers?.zones ?? [];
-            const { col, row } = canvasClickToTile(
-                e.clientX - rect.left,
-                e.clientY - rect.top,
-                canvas,
-                runtime.cameraCenter,
-                runtime.zoom,
-                map.tileWidth,
-                map.tileHeight,
-            );
+            const hoveredTile = runtime.hoverBuildTile;
+            if (!hoveredTile) {
+                this.hud?.setCommandMessage('Наведи курсор на подсвеченный тайл и ставь башню только в него.');
+                return;
+            }
+            const { col, row } = hoveredTile;
             const placed = buildingSystem?.placeBuilding(
                 selectedTowerType,
                 col,
@@ -327,6 +373,8 @@ class GameScreen {
             if (placed) {
                 this.hud?.setCommandMessage(placedType === 'attack' ? 'Attack Tower placed. Choose another tower or keep defending.' : 'Support Tower placed. Choose another tower or keep defending.');
                 selectedTowerType = null;
+                runtime.hoverBuildTile = null;
+                syncCanvasCursor();
                 this.hud?.setBuildSelection(null);
             } else {
                 this.hud?.setCommandMessage('Cannot build here. Click a valid highlighted tile and make sure you have enough energy.');
@@ -358,11 +406,218 @@ class GameScreen {
         gameScreenHudRef = null;
         winLossShown = false;
         selectedTowerType = null;
+        runtime.hoverBuildTile = null;
+        sidePanel.clear();
+        syncCanvasCursor();
 
         // Clear game DOM
         const container = document.getElementById('game-container');
         if (container) container.innerHTML = '';
     }
+*/
+
+function onGameLayoutReady(layout: GameViewportLayoutRefs): void {
+    mapLabelEl = layout.mapLabelEl;
+    modeChipEl = layout.modeChipEl;
+    statusEl = layout.statusEl;
+    mapStatsEl = layout.mapStatsEl;
+    cameraStatsEl = layout.cameraStatsEl;
+    canvas = layout.canvas;
+}
+
+function resetRuntimeState(): void {
+    runtime = {
+        map: null,
+        mapSource: '',
+        mapName: 'active-map.json',
+        cameraCenter: { x: 0, y: 0 },
+        zoom: 1,
+        status: 'Loading map...',
+        error: null,
+        showDebugMasks: false,
+        lastFrameMs: performance.now(),
+        dragging: false,
+        dragX: 0,
+        dragY: 0,
+        hoverBuildTile: null,
+        keys: new Set<string>(),
+        images: new Map<string, ImageEntry>(),
+    };
+}
+
+function ensureAnimationLoop(): void {
+    if (!animating) {
+        animating = true;
+        requestAnimationFrame(frame);
+    }
+    if (!tickWorker) {
+        tickWorker = new Worker(new URL('./game-tick.worker.ts', import.meta.url), { type: 'module' });
+        tickWorker.onmessage = () => {
+            if (document.hidden) {
+                const now = performance.now();
+                const dt = Math.min(0.05, Math.max(0.001, (now - runtime.lastFrameMs) / 1000));
+                runtime.lastFrameMs = now;
+                update(dt);
+            }
+        };
+        tickWorker.postMessage('start');
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                runtime.lastFrameMs = performance.now();
+                if (!animating) { animating = true; requestAnimationFrame(frame); }
+            }
+        });
+    }
+}
+
+function configureGameHud(hud: HudOverlay): void {
+    selectedTowerType = null;
+    hud.setBuildSelection(selectedTowerType);
+    hud.setCommandCallbacks({
+        attack: () => {
+            selectedTowerType = selectedTowerType === 'attack' ? null : 'attack';
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(selectedTowerType);
+            hud.setCommandMessage(
+                selectedTowerType === 'attack'
+                    ? 'Attack Tower selected. Now click a highlighted build tile on the map.'
+                    : 'Attack Tower deselected.',
+            );
+        },
+        buff: () => {
+            selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(selectedTowerType);
+            hud.setCommandMessage(
+                selectedTowerType === 'buff'
+                    ? 'Buff Tower selected. Now click a highlighted build tile on the map.'
+                    : 'Buff Tower deselected.',
+            );
+        },
+        sell: () => {
+            selectedTowerType = selectedTowerType === 'sell' ? null : 'sell';
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(selectedTowerType);
+            hud.setCommandMessage(
+                selectedTowerType === 'sell'
+                    ? 'Salvage mode selected. Click a deployed tower to dismantle it and recover energy.'
+                    : 'Salvage mode deselected.',
+            );
+        },
+        stagedUnitA: () => {
+            if (!gameState) {
+                hud.setCommandMessage('Battle state is still loading.');
+                return;
+            }
+            const result = recruitUnit('light-ally', gameState);
+            hud.setCommandMessage(result.message);
+        },
+        stagedUnitB: () => {
+            if (!gameState) {
+                hud.setCommandMessage('Battle state is still loading.');
+                return;
+            }
+            const result = recruitUnit('collector', gameState);
+            hud.setCommandMessage(result.message);
+        },
+    });
+}
+
+function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => void {
+    return (event: MouseEvent) => {
+        if (!selectedTowerType || !gameState || !runtime.map) return;
+        const map = runtime.map;
+        const rect = canvas.getBoundingClientRect();
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+        if (selectedTowerType === 'sell') {
+            const clickedTile = canvasClickToTile(
+                localX,
+                localY,
+                canvas,
+                runtime.cameraCenter,
+                runtime.zoom,
+                map.tileWidth,
+                map.tileHeight,
+            );
+            const target = gameState.buildings.find((building) => (
+                building.tileCol === clickedTile.col && building.tileRow === clickedTile.row
+            ));
+            if (!target) {
+                hud.setCommandMessage('Click a deployed tower to salvage it and recover energy.');
+                return;
+            }
+
+            const refunded = target.type === 'attack' ? 30 : 24;
+            const sold = buildingSystem?.sellBuilding(target.id, gameState) ?? false;
+            if (!sold) {
+                hud.setCommandMessage('Tower salvage failed. Try again.');
+                return;
+            }
+
+            runtime.status = `${target.type === 'attack' ? 'Attack' : 'Buff'} tower salvaged at ${clickedTile.col},${clickedTile.row}.`;
+            hud.setCommandMessage(`${target.type === 'attack' ? 'Attack' : 'Support'} Tower salvaged. Recovered E ${refunded}.`);
+            selectedTowerType = null;
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(null);
+            return;
+        }
+
+        const zoneLayer = map.layers?.zones ?? [];
+        const hoveredTile = runtime.hoverBuildTile;
+        if (!hoveredTile) {
+            hud.setCommandMessage('Move the cursor over a highlighted tile before placing a tower.');
+            return;
+        }
+        if (!hoveredTile) {
+            hud.setCommandMessage('Наведи курсор на подсвеченный тайл и ставь башню только в него.');
+            return;
+        }
+        const { col, row } = hoveredTile;
+        const placed = buildingSystem?.placeBuilding(
+            selectedTowerType,
+            col,
+            row,
+            zoneLayer as number[],
+            map.width,
+            gameState,
+        ) ?? false;
+        const placedType = selectedTowerType;
+        runtime.status = placed
+            ? `${placedType === 'attack' ? 'Attack' : 'Buff'} tower placed at ${col},${row}.`
+            : `Cannot place ${placedType} tower at ${col},${row}.`;
+        if (placed) {
+            hud.setCommandMessage(placedType === 'attack' ? 'Attack Tower placed. Choose another tower or keep defending.' : 'Support Tower placed. Choose another tower or keep defending.');
+            selectedTowerType = null;
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(null);
+        } else {
+            hud.setCommandMessage('Cannot build here. Click a valid highlighted tile and make sure you have enough energy.');
+        }
+    };
+}
+
+function cleanupGameSession(): void {
+    unbindInput();
+    if (gameState) bossSystem.forceReset(gameState);
+    gameState = null;
+    waveController = null;
+    unitSystem = null;
+    buildingSystem = null;
+    projectileSystem = null;
+    combatSystem = null;
+    resourceSystem = null;
+    gameRenderer = null;
+    gameScreenHudRef = null;
+    winLossShown = false;
+    selectedTowerType = null;
+    runtime.hoverBuildTile = null;
+    runtime.keys.clear();
 }
 
 // ScreenManager initialization — two-step to resolve circular reference
@@ -375,7 +630,25 @@ let screenManager: ScreenManager;
 
 const walletScreen = new ValkyrixWalletSplashScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
 const menuScreen = new ValkyrixMainMenuScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
-const gameScreen = new GameScreen({ navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager);
+const gameScreen = new GameScreen(
+    { navigateTo: (s) => screenManager.navigateTo(s) } as ScreenManager,
+    {
+        sidePanel,
+        onLayoutReady: onGameLayoutReady,
+        configureCanvas,
+        resetRuntimeState,
+        bindInput,
+        syncCanvasCursor,
+        loadMap: () => loadMap(),
+        ensureAnimationLoop,
+        onHudMounted: (hud) => {
+            gameScreenHudRef = hud;
+        },
+        configureHud: configureGameHud,
+        createTowerClickHandler: createTowerPlacementHandler,
+        onBeforeUnmount: cleanupGameSession,
+    },
+);
 
 screenManager = new ScreenManager(appContainer, {
     wallet: walletScreen,
@@ -383,137 +656,20 @@ screenManager = new ScreenManager(appContainer, {
     game: gameScreen,
 });
 
-const initialWalletState = restoreWalletSession();
-screenManager.navigateTo(initialWalletState.connected ? 'menu' : 'wallet');
-
-function ensureRuntimeStyle(): void {
-    if (document.getElementById(STYLE_ID)) return;
-    const style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = `
-        :root {
-            color-scheme: dark;
-            font-family: "Trebuchet MS", "Segoe UI", sans-serif;
-            background:
-                radial-gradient(circle at top, rgba(94, 149, 189, 0.18), transparent 34%),
-                linear-gradient(180deg, #07111d 0%, #05070d 58%, #030406 100%);
-        }
-        * { box-sizing: border-box; }
-        html, body, #game-container { width: 100%; height: 100%; }
-        body {
-            margin: 0;
-            overflow: hidden;
-            color: #d7e4f4;
-            background: transparent;
-        }
-        .vk-app {
-            min-height: 100%;
-            display: grid;
-            place-items: center;
-            padding: 18px;
-        }
-        .vk-shell {
-            width: min(calc(100vw - 36px), calc((100vh - 36px) * ${GAME_W} / ${GAME_H}));
-            aspect-ratio: ${GAME_W} / ${GAME_H};
-            display: grid;
-            grid-template-rows: 1fr ${HUD_HEIGHT}px;
-            border: 1px solid rgba(151, 194, 235, 0.18);
-            border-radius: 22px;
-            overflow: hidden;
-            background:
-                linear-gradient(180deg, rgba(14, 24, 38, 0.96), rgba(6, 11, 19, 0.98)),
-                linear-gradient(120deg, rgba(44, 85, 123, 0.2), transparent 50%);
-            box-shadow:
-                0 28px 60px rgba(0, 0, 0, 0.45),
-                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-        }
-        .vk-chip {
-            padding: 7px 12px;
-            border-radius: 999px;
-            border: 1px solid rgba(126, 190, 240, 0.24);
-            background: rgba(10, 20, 32, 0.74);
-            color: #cde7ff;
-            font-size: 11px;
-            white-space: nowrap;
-            backdrop-filter: blur(6px);
-        }
-        .vk-viewport-frame {
-            position: relative;
-            background:
-                radial-gradient(circle at top, rgba(36, 61, 89, 0.3), transparent 42%),
-                linear-gradient(180deg, #08101b 0%, #04070d 100%);
-        }
-        #vk-canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            cursor: grab;
-        }
-        #vk-canvas:active {
-            cursor: grabbing;
-        }
-        .vk-overlay {
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-start;
-            padding: 12px 14px;
-        }
-        .vk-overlay-topline {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 12px;
-        }
-        .vk-overlay-line {
-            align-self: flex-start;
-            max-width: min(100%, 480px);
-            padding: 7px 10px;
-            border-radius: 12px;
-            background: rgba(5, 9, 15, 0.68);
-            border: 1px solid rgba(139, 194, 235, 0.14);
-            color: #d7e8fa;
-            font-size: 12px;
-            line-height: 1.4;
-            backdrop-filter: blur(6px);
-        }
-        .vk-runtime-hidden {
-            display: none;
-        }
-        .vk-runtime-hud-slot {
-            position: relative;
-            z-index: 2;
-            padding: 0;
-            background: rgba(3, 9, 22, 0.99);
-            border-top: 1px solid rgba(40, 100, 200, 0.35);
-        }
-        @media (max-width: 960px) {
-            .vk-app { padding: 10px; }
-            .vk-shell {
-                width: min(calc(100vw - 20px), calc((100vh - 20px) * ${GAME_W} / ${GAME_H}));
-                border-radius: 18px;
-            }
-            .vk-overlay-topline {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            .vk-runtime-hud-slot {
-                padding: 8px;
-            }
-        }
-    `;
-    document.head.append(style);
-}
-
-function getRequiredElement<T extends HTMLElement>(id: string): T {
-    const el = document.getElementById(id);
-    if (!el) throw new Error(`Missing required element #${id}`);
-    return el as T;
-}
+// Try silent reconnect (uses onlyIfTrusted — no popup).
+// Wallet extensions may inject after DOMContentLoaded, so we await a tick first.
+(async () => {
+    await new Promise<void>(r => {
+        if (document.readyState === 'complete') { r(); return; }
+        window.addEventListener('load', () => r(), { once: true });
+    });
+    const walletState = await tryAutoConnect();
+    screenManager.navigateTo(walletState.connected ? 'menu' : 'wallet');
+})();
 
 function configureCanvas(target: HTMLCanvasElement, targetCtx: CanvasRenderingContext2D): void {
+    canvas = target;
+    ctx = targetCtx;
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     target.width = Math.round(GAME_W * dpr);
     target.height = Math.round(GAME_VIEW_H * dpr);
@@ -522,7 +678,10 @@ function configureCanvas(target: HTMLCanvasElement, targetCtx: CanvasRenderingCo
 }
 
 function bindInput(): void {
-    window.addEventListener('keydown', (event) => {
+    if (inputBound) return;
+    inputBound = true;
+
+    keydownHandler = (event: KeyboardEvent) => {
         if (event.repeat) return;
         const code = event.code;
         if (code === 'KeyR') {
@@ -545,20 +704,29 @@ function bindInput(): void {
             event.preventDefault();
             runtime.keys.add(code);
         }
-    });
+    };
 
-    window.addEventListener('keyup', (event) => {
+    keyupHandler = (event: KeyboardEvent) => {
         runtime.keys.delete(event.code);
-    });
+    };
 
-    canvas.addEventListener('pointerdown', (event) => {
+    pointerDownHandler = (event: PointerEvent) => {
+        if (selectedTowerType) {
+            syncCanvasCursor();
+            return;
+        }
         runtime.dragging = true;
         runtime.dragX = event.clientX;
         runtime.dragY = event.clientY;
         canvas.setPointerCapture(event.pointerId);
-    });
+        syncCanvasCursor();
+    };
 
-    canvas.addEventListener('pointermove', (event) => {
+    pointerMoveHandler = (event: PointerEvent) => {
+        if (selectedTowerType) {
+            updateBuildHoverTile(event.clientX, event.clientY);
+            return;
+        }
         if (!runtime.dragging || !runtime.map) return;
         const scaleX = canvas.clientWidth > 0 ? GAME_W / canvas.clientWidth : 1;
         const scaleY = canvas.clientHeight > 0 ? GAME_VIEW_H / canvas.clientHeight : 1;
@@ -570,24 +738,76 @@ function bindInput(): void {
             x: runtime.cameraCenter.x - dx / runtime.zoom,
             y: runtime.cameraCenter.y - dy / runtime.zoom,
         });
-    });
+    };
 
-    const endDrag = (event: PointerEvent) => {
+    pointerUpHandler = (event: PointerEvent) => {
+        if (selectedTowerType) {
+            syncCanvasCursor();
+            return;
+        }
         if (runtime.dragging) {
             runtime.dragging = false;
             if (canvas.hasPointerCapture(event.pointerId)) {
                 canvas.releasePointerCapture(event.pointerId);
             }
         }
+        syncCanvasCursor();
+    };
+    pointerCancelHandler = pointerUpHandler;
+
+    pointerLeaveHandler = () => {
+        runtime.hoverBuildTile = null;
+        if (!selectedTowerType) {
+            syncCanvasCursor();
+        }
     };
 
-    canvas.addEventListener('pointerup', endDrag);
-    canvas.addEventListener('pointercancel', endDrag);
+    window.addEventListener('keydown', keydownHandler);
+    window.addEventListener('keyup', keyupHandler);
+    canvas.addEventListener('pointerdown', pointerDownHandler);
+    canvas.addEventListener('pointermove', pointerMoveHandler);
+    canvas.addEventListener('pointerup', pointerUpHandler);
+    canvas.addEventListener('pointercancel', pointerCancelHandler);
+    canvas.addEventListener('pointerleave', pointerLeaveHandler);
+}
+
+function unbindInput(): void {
+    if (!inputBound) return;
+    inputBound = false;
+    if (keydownHandler) {
+        window.removeEventListener('keydown', keydownHandler);
+        keydownHandler = null;
+    }
+    if (keyupHandler) {
+        window.removeEventListener('keyup', keyupHandler);
+        keyupHandler = null;
+    }
+    if (pointerDownHandler) {
+        canvas.removeEventListener('pointerdown', pointerDownHandler);
+        pointerDownHandler = null;
+    }
+    if (pointerMoveHandler) {
+        canvas.removeEventListener('pointermove', pointerMoveHandler);
+        pointerMoveHandler = null;
+    }
+    if (pointerUpHandler) {
+        canvas.removeEventListener('pointerup', pointerUpHandler);
+        pointerUpHandler = null;
+    }
+    if (pointerCancelHandler) {
+        canvas.removeEventListener('pointercancel', pointerCancelHandler);
+        pointerCancelHandler = null;
+    }
+    if (pointerLeaveHandler) {
+        canvas.removeEventListener('pointerleave', pointerLeaveHandler);
+        pointerLeaveHandler = null;
+    }
 }
 
 async function loadMap(showReloadStatus = false): Promise<void> {
     runtime.error = null;
     runtime.status = showReloadStatus ? 'Reloading active map...' : 'Loading active map...';
+    sidePanel.resetState();
     try {
         const mapUrl = new URL(`assets/maps/active-map.json?v=${Date.now()}`, window.location.href);
         const response = await fetch(mapUrl.toString(), { cache: 'no-store' });
@@ -605,6 +825,7 @@ async function loadMap(showReloadStatus = false): Promise<void> {
         primeTileImages(parsed);
         primeWorldItemImages(parsed);
         runtime.status = showReloadStatus ? 'Map reloaded from active-map.json.' : 'Map loaded.';
+        void sidePanel.refreshMagicBlockTransactions();
 
         // Initialize Phase 3 game systems after map is loaded
         gameState = createGameState(parsed);
@@ -613,6 +834,7 @@ async function loadMap(showReloadStatus = false): Promise<void> {
         buildingSystem = new BuildingSystem();
         projectileSystem = new ProjectileSystem();
         combatSystem = new CombatSystem();
+        resourceSystem = new ResourceSystem();
         const arrowImg = new Image();
         arrowImg.src = '/assets/projectiles/Arrow01.png';
         gameRenderer = new GameRenderer(arrowImg);
@@ -689,22 +911,36 @@ function update(dt: number): void {
         buildingSystem?.update(dt, gameState);
         projectileSystem?.update(dt, gameState);
         combatSystem?.update(dt, gameState);
+        resourceSystem?.update(dt, gameState);
+        bossSystem.update(dt, gameState, document.body);
     }
 
     // HUD update with live game data
     if (gameState) {
-        gameScreenHudRef?.setActionAvailability({ attack: gameState.resources >= 50, buff: gameState.resources >= 40 });
+        const enemyUnits = gameState.units.filter((u) => u.faction === 'enemy');
+        const queuedEnemyCount = gameState.spawnQueue.filter((entry) => UNIT_DEFS[entry.defKey]?.faction === 'enemy').length;
+        const enemyKilledTotal = sidePanel.reconcileBattleState(gameState);
+        gameScreenHudRef?.setActionAvailability({
+            attack: gameState.resources >= 50,
+            buff: gameState.resources >= 40,
+            sell: gameState.buildings.length > 0,
+        });
         gameScreenHudRef?.update({
             wave: gameState.waveNumber,
             health: gameState.citadelHp,
             citadelMaxHp: gameState.citadelMaxHp,
             resources: gameState.resources,
+            crystals: gameState.crystals ?? 0,
             armedAction: selectedTowerType,
             waveTimer: gameState.waveTimer,
-            enemiesAlive: gameState.units.filter(u => u.faction === 'enemy').length,
-            enemiesQueued: gameState.spawnQueue.length,
+            enemiesAlive: enemyUnits.length,
+            enemiesQueued: queuedEnemyCount,
             alliesAlive: gameState.units.filter(u => u.faction === 'ally').length,
             towerCount: gameState.buildings.length,
+            enemiesKilled: enemyKilledTotal,
+            canSalvage: gameState.buildings.length > 0,
+            canAffordViking: canRecruitUnit('light-ally', gameState),
+            canAffordCollector: canRecruitUnit('collector', gameState),
         });
 
         // Win/loss detection — show overlay once
@@ -738,17 +974,20 @@ function render(): void {
 
     drawBackdrop();
     drawTiles(runtime.map);
+    drawBuildPlacementPreview(runtime.map);
     if (runtime.showDebugMasks) {
         drawSceneRail(runtime.map);
         drawSceneMarkers(runtime.map);
     }
-    drawWorldItems(runtime.map);
+    drawWorldItems(runtime.map, 'background');
     drawCameraFocus(runtime.map);
 
     // Phase 3: render game entities (units, buildings, projectiles) on top of tile map
     if (gameState && gameRenderer) {
         gameRenderer.render(ctx, gameState, runtime.cameraCenter, runtime.zoom);
     }
+
+    drawWorldItems(runtime.map, 'foreground');
 
     syncHud();
 }
@@ -920,7 +1159,7 @@ function drawMarker(x: number, y: number, radius: number, color: string, label: 
     ctx.restore();
 }
 
-function drawWorldItems(map: RuntimeMap): void {
+function drawWorldItems(map: RuntimeMap, layer: 'background' | 'foreground' = 'background'): void {
     const combined = [
         ...collectWorldItems(map.buildings, map.buildingTemplates, 'buildings', '#95f2af'),
         ...collectWorldItems(map.obstacles, map.obstacleTemplates, 'objects', '#ffb56d'),
@@ -932,20 +1171,34 @@ function drawWorldItems(map: RuntimeMap): void {
     for (const entry of combined) {
         const item = entry.item;
         if (!Number.isFinite(item.x) || !Number.isFinite(item.y)) continue;
+        const itemKind = getAnimatedWorldItemKind(entry.asset, item);
+        const isForeground = itemKind === 'port';
+        if (layer === 'background' && isForeground) continue;
+        if (layer === 'foreground' && !isForeground) continue;
 
         const screen = worldToScreen(item.x ?? 0, item.y ?? 0);
         const size = getWorldItemDrawSize(map, item);
-        const width = Math.max(12, Math.round(size.width * runtime.zoom));
-        const height = Math.max(12, Math.round(size.height * runtime.zoom));
+        const width = Math.max(1, size.width * runtime.zoom);
+        const height = Math.max(1, size.height * runtime.zoom);
         const anchorX = typeof item.ax === 'number' ? item.ax : 0.5;
         const anchorY = typeof item.ay === 'number' ? item.ay : 1;
         const drawX = screen.x - width * anchorX;
         const drawY = screen.y - height * anchorY;
         const image = entry.asset ? ensureRuntimeImage(entry.asset) : null;
+        const isCitadel = itemKind === 'citadel';
+        const nowMs = performance.now();
 
         if (image?.ready) {
             const frame = getRuntimeImageFrame(image.img, entry.asset, item, entry.kind);
+
             ctx.save();
+            
+            // 2. Дыхание ауры под базой
+            if (isCitadel) {
+                drawCitadelAura(ctx, nowMs);
+                drawCitadelOrbitingSwarm(ctx, drawX, drawY, width, height, nowMs, 'behind');
+            }
+
             if (item.rot) {
                 const pivotX = screen.x;
                 const pivotY = screen.y;
@@ -963,9 +1216,24 @@ function drawWorldItems(map: RuntimeMap): void {
                     height,
                 );
             } else {
-                ctx.drawImage(image.img, frame.sx, frame.sy, frame.sw, frame.sh, drawX, drawY, width, height);
+                if (isCitadel) {
+                    drawCitadelSpriteProfiled(image.img, frame, drawX, drawY, width, height);
+                    drawCitadelBaseOcclusion(ctx, screen.x, screen.y, width, height);
+                } else {
+                    ctx.drawImage(image.img, frame.sx, frame.sy, frame.sw, frame.sh, drawX, drawY, width, height);
+                }
+                
+                // 3. Энергия маны по каналам вверх
+                if (isCitadel) {
+                    drawCitadelEnergyFlow(ctx, drawX, drawY, width, height, nowMs);
+                    drawCitadelTileBurial(map, item);
+                    drawCitadelGroundSeam(ctx, screen.x, screen.y, width, height);
+                }
             }
             ctx.restore();
+            if (isCitadel) {
+                drawCitadelOrbitingSwarm(ctx, drawX, drawY, width, height, nowMs, 'front');
+            }
             continue;
         }
 
@@ -976,6 +1244,207 @@ function drawWorldItems(map: RuntimeMap): void {
         ctx.strokeRect(drawX, drawY, width, height);
         ctx.restore();
     }
+}
+
+function drawCitadelBaseOcclusion(
+    ctx: CanvasRenderingContext2D,
+    centerX: number,
+    baseY: number,
+    width: number,
+    height: number,
+): void {
+    const clipTop = baseY - height * 0.16;
+    const clipHeight = height * 0.16;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.beginPath();
+    ctx.rect(centerX - width * 0.28, clipTop, width * 0.56, clipHeight);
+    ctx.clip();
+
+    const shade = ctx.createRadialGradient(
+        centerX,
+        baseY - height * 0.045,
+        width * 0.03,
+        centerX,
+        baseY - height * 0.04,
+        width * 0.2,
+    );
+    shade.addColorStop(0, 'rgba(8, 12, 18, 0.28)');
+    shade.addColorStop(0.55, 'rgba(8, 12, 18, 0.16)');
+    shade.addColorStop(1, 'rgba(8, 12, 18, 0)');
+    ctx.fillStyle = shade;
+    ctx.beginPath();
+    ctx.ellipse(centerX, baseY - height * 0.048, width * 0.18, height * 0.045, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawCitadelTileBurial(map: RuntimeMap, item: WorldItem): void {
+    const anchor = worldToNearestTile(map, item.x ?? 0, item.y ?? 0);
+    if (!anchor) return;
+
+    const halfW = (map.tileWidth / 2) * runtime.zoom;
+    const halfH = (map.tileHeight / 2) * runtime.zoom;
+    const caps = [
+        { dx: -2, dy: 1, cover: 0.52 },
+        { dx: -1, dy: 1, cover: 0.58 },
+        { dx: 0, dy: 1, cover: 0.62 },
+        { dx: 1, dy: 1, cover: 0.58 },
+        { dx: 2, dy: 1, cover: 0.52 },
+        { dx: -1, dy: 2, cover: 0.36 },
+        { dx: 0, dy: 2, cover: 0.4 },
+        { dx: 1, dy: 2, cover: 0.36 },
+    ];
+
+    for (const cap of caps) {
+        const col = anchor.col + cap.dx;
+        const row = anchor.row + cap.dy;
+        if (col < 0 || row < 0 || col >= map.width || row >= map.height) continue;
+
+        const world = tileToWorld(map, col, row);
+        const screen = worldToScreen(world.x, world.y);
+        const groundGid = getLayerCell(map.layers?.ground, map.width, col, row);
+        const decorGid = getLayerCell(map.layers?.decor, map.width, col, row);
+        const capHeight = halfH * cap.cover;
+
+        ctx.save();
+        diamondPath(screen.x, screen.y, halfW, halfH);
+        ctx.clip();
+        ctx.beginPath();
+        ctx.rect(screen.x - halfW, screen.y - halfH, halfW * 2, capHeight);
+        ctx.clip();
+
+        drawDiamondTile(map, groundGid, screen.x, screen.y, halfW, halfH, '#182b45');
+        if (decorGid > 0) {
+            drawDiamondTile(map, decorGid, screen.x, screen.y, halfW, halfH, '#244a72');
+        }
+
+        ctx.restore();
+    }
+}
+
+function drawCitadelGroundSeam(
+    ctx: CanvasRenderingContext2D,
+    centerX: number,
+    baseY: number,
+    width: number,
+    height: number,
+): void {
+    const seamY = baseY - height * 0.012;
+    const outerRx = width * 0.286;
+    const outerRy = Math.max(5, height * 0.034);
+    const midRx = width * 0.272;
+    const midRy = Math.max(3.2, height * 0.022);
+    const innerRx = width * 0.255;
+    const innerRy = Math.max(2, height * 0.013);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(centerX - outerRx - 4, seamY - outerRy * 1.2, (outerRx + 4) * 2, outerRy * 1.8);
+    ctx.clip();
+
+    const soil = ctx.createLinearGradient(centerX, seamY - outerRy, centerX, seamY + outerRy);
+    soil.addColorStop(0, 'rgba(126, 136, 146, 0.08)');
+    soil.addColorStop(0.26, 'rgba(92, 100, 112, 0.28)');
+    soil.addColorStop(0.62, 'rgba(48, 54, 64, 0.64)');
+    soil.addColorStop(1, 'rgba(20, 24, 32, 0.88)');
+    ctx.fillStyle = soil;
+    traceCitadelSeam(ctx, centerX, seamY, outerRx, outerRy, midRx, midRy);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(10, 14, 20, 0.34)';
+    traceCitadelSeam(ctx, centerX, seamY + outerRy * 0.04, midRx, midRy, innerRx, innerRy);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(158, 170, 182, 0.12)';
+    ctx.lineWidth = Math.max(0.6, width * 0.004);
+    ctx.beginPath();
+    ctx.ellipse(centerX, seamY - outerRy * 0.36, outerRx * 0.86, outerRy * 0.34, 0, Math.PI * 0.16, Math.PI * 0.84, true);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(8, 12, 18, 0.26)';
+    ctx.lineWidth = Math.max(0.9, width * 0.005);
+    ctx.beginPath();
+    ctx.ellipse(centerX, seamY + outerRy * 0.22, outerRx * 0.95, outerRy * 0.72, 0, Math.PI * 0.18, Math.PI * 0.82, false);
+    ctx.stroke();
+    ctx.restore();
+}
+
+function traceCitadelSeam(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    outerRx: number,
+    outerRy: number,
+    innerRx: number,
+    innerRy: number,
+): void {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, outerRx, outerRy, 0, Math.PI * 0.06, Math.PI * 0.94, false);
+    ctx.ellipse(cx, cy, innerRx, innerRy, 0, Math.PI * 0.94, Math.PI * 0.06, true);
+    ctx.closePath();
+}
+
+function worldToNearestTile(map: RuntimeMap, x: number, y: number): { col: number; row: number } | null {
+    const origin = getIsoOrigin(map);
+    const halfW = map.tileWidth / 2;
+    const halfH = map.tileHeight / 2;
+    if (!(halfW > 0) || !(halfH > 0)) return null;
+    const iso = worldToIso(x, y, origin.x, origin.y, halfW, halfH);
+    return {
+        col: Math.round(iso.a / 2),
+        row: Math.round(iso.b / 2),
+    };
+}
+
+function drawCitadelSpriteProfiled(
+    image: HTMLImageElement,
+    frame: { sx: number; sy: number; sw: number; sh: number },
+    drawX: number,
+    drawY: number,
+    width: number,
+    height: number,
+): void {
+    const step = Math.max(1, Math.round(frame.sh / 96));
+
+    for (let sy = 0; sy < frame.sh; sy += step) {
+        const sliceH = Math.min(step, frame.sh - sy);
+        const t = (sy + sliceH * 0.5) / Math.max(frame.sh, 1);
+        const widthScale = getCitadelWidthProfile(t);
+        const destY = drawY + (sy / frame.sh) * height;
+        const destH = (sliceH / frame.sh) * height;
+        const destW = width * widthScale;
+        const destX = drawX + (width - destW) / 2;
+
+        ctx.drawImage(
+            image,
+            frame.sx,
+            frame.sy + sy,
+            frame.sw,
+            sliceH,
+            destX,
+            destY,
+            destW,
+            destH,
+        );
+    }
+}
+
+function getCitadelWidthProfile(t: number): number {
+    if (t < 0.16) {
+        return 0.76 + (t / 0.16) * 0.06;
+    }
+    if (t < 0.46) {
+        return 0.82 + ((t - 0.16) / 0.3) * 0.16;
+    }
+    if (t < 0.76) {
+        return 0.98 + ((t - 0.46) / 0.3) * 0.2;
+    }
+    if (t < 0.92) {
+        return 1.18 + ((t - 0.76) / 0.16) * 0.08;
+    }
+    return 1.26;
 }
 
 function getWorldItemDrawSize(map: RuntimeMap, item: WorldItem): { width: number; height: number } {
@@ -1093,6 +1562,33 @@ function drawCameraFocus(map: RuntimeMap): void {
     ctx.strokeStyle = 'rgba(141, 214, 255, 0.4)';
     ctx.lineWidth = 2;
     ctx.strokeRect(leftTop.x, leftTop.y, rightBottom.x - leftTop.x, rightBottom.y - leftTop.y);
+    ctx.restore();
+}
+
+function drawBuildPlacementPreview(map: RuntimeMap): void {
+    if (selectedTowerType === 'sell') return;
+    if (!selectedTowerType || !runtime.hoverBuildTile) return;
+
+    const { col, row } = runtime.hoverBuildTile;
+    if (col < 0 || row < 0 || col >= map.width || row >= map.height) return;
+
+    const center = tileToWorld(map, col, row);
+    const screen = worldToScreen(center.x, center.y);
+    const halfW = (map.tileWidth / 2) * runtime.zoom;
+    const halfH = (map.tileHeight / 2) * runtime.zoom;
+    const zoneValue = getLayerCell(map.layers?.zones, map.width, col, row);
+    const occupied = !!gameState?.buildings.some((b) => b.tileCol === col && b.tileRow === row);
+    const cost = selectedTowerType === 'attack' ? 50 : 40;
+    const affordable = (gameState?.resources ?? 0) >= cost;
+    const valid = zoneValue !== 0 && !occupied && affordable;
+
+    ctx.save();
+    diamondPath(screen.x, screen.y, halfW, halfH);
+    ctx.fillStyle = valid ? 'rgba(98, 224, 166, 0.18)' : 'rgba(255, 108, 108, 0.2)';
+    ctx.fill();
+    ctx.lineWidth = Math.max(2, runtime.zoom * 1.8);
+    ctx.strokeStyle = valid ? 'rgba(168, 255, 218, 0.95)' : 'rgba(255, 196, 196, 0.95)';
+    ctx.stroke();
     ctx.restore();
 }
 
@@ -1611,7 +2107,11 @@ function resolveWorldItemAsset(
             ? [`assets/objects/${fileName}`, `assets/ball/${fileName}`]
             : [`assets/graphics/${fileName}`, `assets/Graphics/${fileName}`];
 
-    return candidates[0] ?? '';
+    let resolved = candidates[0] ?? '';
+    if (resolved && !resolved.includes('.')) {
+        resolved += '.png';
+    }
+    return resolved;
 }
 
 function normalizeAssetPath(ref: string): string {
@@ -1625,7 +2125,8 @@ function toAssetUrl(ref: string): string {
     const normalized = normalizeAssetPath(ref);
     if (!normalized) return '';
     if (/^https?:\/\//i.test(normalized)) return normalized;
-    return new URL(normalized, window.location.href).toString();
+    // Vite serves public as root, so just returning /path works best
+    return '/' + normalized;
 }
 
 function diamondPath(x: number, y: number, halfW: number, halfH: number): void {
