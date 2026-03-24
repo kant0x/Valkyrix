@@ -1,26 +1,33 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NegotiationOverlay } from './NegotiationOverlay';
+import { getResponse } from '../game/BossDialog';
 
-// Helper: build a mock fetch that returns the given outcome text
-function makeFetchMock(outcomeText: string) {
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    json: () =>
-      Promise.resolve({
-        candidates: [
-          { content: { parts: [{ text: outcomeText }] } },
-        ],
-      }),
+// Helper: submit a message and advance past the 600ms thinking delay
+function submit(input: HTMLInputElement, sendBtn: HTMLButtonElement, text: string) {
+  input.value = text;
+  sendBtn.click();
+  vi.advanceTimersByTime(600); // thinking delay → reply + UI update
+}
+
+describe('BossDialog classification', () => {
+  it('1 word → bad', () => {
+    expect(getResponse('нет').outcome).toBe('bad');
   });
-}
 
-// Flush all pending promises (multiple microtask queues)
-async function flushPromises() {
-  // Two levels needed: fetch.then() and response.json().then()
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
+  it('2-4 words → neutral', () => {
+    expect(getResponse('мир или война').outcome).toBe('neutral');
+  });
+
+  it('5+ words → good', () => {
+    expect(getResponse('мы защищаем данные всего человечества').outcome).toBe('good');
+  });
+
+  it('returns a non-empty reply string', () => {
+    const { reply } = getResponse('Аполлон — последняя надежда людей');
+    expect(typeof reply).toBe('string');
+    expect(reply.length).toBeGreaterThan(10);
+  });
+});
 
 describe('NegotiationOverlay', () => {
   let overlay: NegotiationOverlay;
@@ -36,67 +43,52 @@ describe('NegotiationOverlay', () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
     document.body.innerHTML = '';
   });
 
-  // ─── 1. Mount: DOM structure ───────────────────────────────────────────────
+  // ─── 1. Mount ─────────────────────────────────────────────────────────────
 
-  it('mount renders scale bar and attempts counter', () => {
+  it('mount renders scale bar, attempts counter, and boss opening line', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
-    // Overlay root
     expect(document.getElementById('vk-neg-overlay')).not.toBeNull();
-
-    // Scale bar fill element
     expect(document.getElementById('vk-neg-scale-fill')).not.toBeNull();
 
-    // Attempts counter shows initial value
     const attemptsEl = document.getElementById('vk-neg-attempts');
-    expect(attemptsEl).not.toBeNull();
     expect(attemptsEl?.textContent).toContain('3');
+
+    // Opening line is rendered (non-empty boss reply)
+    const replyEl = document.getElementById('vk-neg-reply');
+    expect(replyEl?.textContent?.length).toBeGreaterThan(5);
   });
 
-  // ─── 2. Good outcome: scale += 4 ──────────────────────────────────────────
+  // ─── 2. Good outcome (5+ words → scale +4) ───────────────────────────────
 
-  it('good outcome: scale increases by 4', async () => {
-    vi.stubGlobal(
-      'fetch',
-      makeFetchMock('Ты посмел...\n{"outcome":"good"}'),
-    );
-
+  it('good outcome: 5+ word reply increases scale by 4', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
     const input = document.querySelector<HTMLInputElement>('input')!;
     const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'Я предлагаю золото';
 
-    sendBtn.click();
-    await flushPromises();
+    // 5 words → good
+    submit(input, sendBtn, 'мы защищаем данные всего человечества');
 
     const labelEl = document.getElementById('vk-neg-scale-label');
     expect(labelEl?.textContent).toContain('4');
     expect(labelEl?.textContent).toContain('12');
   });
 
-  // ─── 3. Neutral outcome: scale += 2, attemptsLeft += 2 ───────────────────
+  // ─── 3. Neutral outcome (2-4 words → scale +2, attempts +2) ──────────────
 
-  it('neutral outcome: scale increases by 2 and attemptsLeft increases by 2', async () => {
-    vi.stubGlobal(
-      'fetch',
-      makeFetchMock('Интересно...\n{"outcome":"neutral"}'),
-    );
-
+  it('neutral outcome: 2-4 word reply increases scale by 2 and attempts by 2', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
     const input = document.querySelector<HTMLInputElement>('input')!;
     const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'Может договоримся?';
 
-    sendBtn.click();
-    await flushPromises();
+    // 3 words → neutral
+    submit(input, sendBtn, 'мир или война');
 
-    // scale 0+2=2
     const labelEl = document.getElementById('vk-neg-scale-label');
     expect(labelEl?.textContent).toContain('2');
 
@@ -105,24 +97,17 @@ describe('NegotiationOverlay', () => {
     expect(attemptsEl?.textContent).toContain('5');
   });
 
-  // ─── 4. Bad outcome: attemptsLeft -= 1, scale unchanged ──────────────────
+  // ─── 4. Bad outcome (1 word → attempts -1, scale 0) ──────────────────────
 
-  it('bad outcome: attemptsLeft decreases by 1, scale unchanged', async () => {
-    vi.stubGlobal(
-      'fetch',
-      makeFetchMock('Молчи, смертный!\n{"outcome":"bad"}'),
-    );
-
+  it('bad outcome: 1 word reply decreases attempts by 1, scale unchanged', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
     const input = document.querySelector<HTMLInputElement>('input')!;
     const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'Ты проиграешь!';
 
-    sendBtn.click();
-    await flushPromises();
+    // 1 word → bad
+    submit(input, sendBtn, 'нет');
 
-    // scale stays 0
     const labelEl = document.getElementById('vk-neg-scale-label');
     expect(labelEl?.textContent).toContain('0');
     expect(labelEl?.textContent).toContain('12');
@@ -132,43 +117,30 @@ describe('NegotiationOverlay', () => {
     expect(attemptsEl?.textContent).toContain('2');
   });
 
-  // ─── 5. Success terminal: scale >= 12 calls onSuccess after 2800ms ────────
+  // ─── 5. Success terminal: scale >= 12 calls onSuccess ────────────────────
 
-  it('success terminal: scale >= 12 calls onSuccess after 2800ms delay', async () => {
-    vi.stubGlobal(
-      'fetch',
-      makeFetchMock('Хорошо...\n{"outcome":"good"}'),
-    );
-
+  it('success terminal: scale >= 12 calls onSuccess after delay', () => {
+    // Start at 8 so one good reply (5+ words, +4) reaches 12
     overlay.mount(document.body, { onSuccess, onFailure, initialScale: 8 });
 
     const input = document.querySelector<HTMLInputElement>('input')!;
     const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'Мы заключим союз';
 
-    sendBtn.click();
-    await flushPromises(); // resolve fetch promises
+    submit(input, sendBtn, 'мы защищаем данные всего человечества');
 
-    // Should NOT have called onSuccess yet (waiting for 2800ms)
+    // onSuccess not called yet (waiting for 2000ms read delay)
     expect(onSuccess).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(2800);
+    vi.advanceTimersByTime(2000);
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onFailure).not.toHaveBeenCalled();
-
-    // Overlay should be removed
     expect(document.getElementById('vk-neg-overlay')).toBeNull();
   });
 
-  // ─── 6. Failure terminal: attemptsLeft = 0 calls onFailure ───────────────
+  // ─── 6. Failure terminal: attempts = 0 calls onFailure ───────────────────
 
-  it('failure terminal: attemptsLeft = 0 calls onFailure after 2800ms delay', async () => {
-    vi.stubGlobal(
-      'fetch',
-      makeFetchMock('Ничтожество!\n{"outcome":"bad"}'),
-    );
-
-    // 1 attempt left, scale < 12
+  it('failure terminal: attempts = 0 calls onFailure after delay', () => {
+    // 1 attempt, 1 word → bad → attempts = 0
     overlay.mount(document.body, {
       onSuccess,
       onFailure,
@@ -178,45 +150,38 @@ describe('NegotiationOverlay', () => {
 
     const input = document.querySelector<HTMLInputElement>('input')!;
     const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'Ты проиграешь!';
 
-    sendBtn.click();
-    await flushPromises();
+    submit(input, sendBtn, 'нет');
 
     expect(onFailure).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(2800);
+    vi.advanceTimersByTime(2000);
     expect(onFailure).toHaveBeenCalledTimes(1);
     expect(onSuccess).not.toHaveBeenCalled();
-
     expect(document.getElementById('vk-neg-overlay')).toBeNull();
   });
 
   // ─── 7. Pending guard ─────────────────────────────────────────────────────
 
-  it('pending guard prevents double-submit', async () => {
-    const fetchMock = makeFetchMock('Ты посмел...\n{"outcome":"good"}');
-    vi.stubGlobal('fetch', fetchMock);
-
-    overlay.mount(document.body, { onSuccess, onFailure });
+  it('pending guard: double-click processes only once', () => {
+    overlay.mount(document.body, { onSuccess, onFailure, initialScale: 8 });
 
     const input = document.querySelector<HTMLInputElement>('input')!;
     const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'Тест';
+    input.value = 'мы защищаем данные всего человечества';
 
-    // First click — starts pending
+    // Two clicks before thinking delay expires
+    sendBtn.click();
     sendBtn.click();
 
-    // Second click while still pending — should be ignored
-    sendBtn.click();
+    vi.advanceTimersByTime(600);
 
-    await flushPromises();
-
-    // fetch should have been called only once
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Scale should be 8+4=12, not 8+8=16
+    const labelEl = document.getElementById('vk-neg-scale-label');
+    expect(labelEl?.textContent).toBe('12 / 12');
   });
 
-  // ─── 8. Unmount removes overlay ──────────────────────────────────────────
+  // ─── 8. Unmount ───────────────────────────────────────────────────────────
 
   it('unmount removes overlay from DOM', () => {
     overlay.mount(document.body, { onSuccess, onFailure });

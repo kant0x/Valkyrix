@@ -1,15 +1,7 @@
+import { getOpening, getResponse } from '../game/BossDialog';
+
 const OVERLAY_ID = 'vk-neg-overlay';
 const STYLE_ID = 'vk-neg-styles';
-
-const GEMINI_KEY = (import.meta as any).env?.VITE_GEMINI_KEY ?? '';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
-
-const SYSTEM_PROMPT = `Ты — Пожиратель Миров, древний робот-завоеватель, явившийся забрать Священный Грааль.
-Игрок пытается убедить тебя уйти. Отвечай 1–2 предложениями от лица босса: угрожающе, величественно, загадочно.
-После ответа добавь JSON на новой строке (только текст, без markdown): {"outcome":"good"} или {"outcome":"neutral"} или {"outcome":"bad"}.
-- good: игрок льстит, предлагает ценную сделку, уважает твою силу, убедителен
-- neutral: ответ частично интересный, не плохой, но не полностью убедительный
-- bad: грубость, угрозы, бессмыслица, пустой текст или полное неуважение`;
 
 export type NegotiationMountOptions = {
   onSuccess: () => void;
@@ -42,7 +34,7 @@ export class NegotiationOverlay {
         <div class="vk-neg-boss-area">
           <div class="vk-neg-boss-name">Пожиратель Миров</div>
         </div>
-        <p class="vk-neg-reply" id="vk-neg-reply">"Ещё один защитник Цитадели. Говори, смертный — у тебя мало времени."</p>
+        <p class="vk-neg-reply" id="vk-neg-reply">"${getOpening()}"</p>
 
         <div class="vk-neg-scale-wrap">
           <div class="vk-neg-scale-track">
@@ -53,15 +45,13 @@ export class NegotiationOverlay {
         <div class="vk-neg-attempts" id="vk-neg-attempts">Попыток: ${this.attemptsLeft}</div>
 
         <input id="vk-neg-input" class="vk-neg-input" type="text"
-               placeholder="Что предлагаешь боссу?" maxlength="200" autocomplete="off" />
+               placeholder="Что предлагаешь боссу?" maxlength="300" autocomplete="off" />
         <button id="vk-neg-send" class="vk-neg-send" type="button">Отправить</button>
         <div id="vk-neg-status" class="vk-neg-status"></div>
       </div>
     `;
 
-    // Always append to body (same idiom as HudOverlay.showWinLossOverlay)
     container.appendChild(this.el);
-
     this.updateUI();
 
     const input = this.el.querySelector<HTMLInputElement>('#vk-neg-input')!;
@@ -96,11 +86,11 @@ export class NegotiationOverlay {
     }
   }
 
-  private async sendMessage(
+  private sendMessage(
     input: HTMLInputElement,
     sendBtn: HTMLButtonElement,
     opts: NegotiationMountOptions,
-  ): Promise<void> {
+  ): void {
     // Pending guard — prevent double-submit
     if (this.pending) return;
 
@@ -112,29 +102,11 @@ export class NegotiationOverlay {
     sendBtn.disabled = true;
     this.setStatus('Пожиратель Миров думает...');
 
-    try {
-      const response = await fetch(GEMINI_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ role: 'user', parts: [{ text }] }],
-          generationConfig: { temperature: 0.9, maxOutputTokens: 200 },
-        }),
-      });
+    // Small delay so the "thinking" message is visible
+    setTimeout(() => {
+      const { reply, outcome } = getResponse(text);
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const data = await response.json();
-      const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-
-      // Extract 3-outcome JSON
-      const jsonMatch = raw.match(/\{"outcome"\s*:\s*"(good|neutral|bad)"\}/);
-      const outcome = (jsonMatch?.[1] ?? 'bad') as 'good' | 'neutral' | 'bad';
-
-      // Strip JSON from display text
-      const displayText = raw.replace(/\{[^}]*\}/, '').trim();
-      this.setReply(displayText || raw);
+      this.setReply(reply);
       this.setStatus('');
 
       // Apply outcome
@@ -150,7 +122,7 @@ export class NegotiationOverlay {
 
       this.updateUI();
 
-      // Terminal check after 2800ms delay
+      // Terminal check after reading the reply
       setTimeout(() => {
         if (this.scale >= 12) {
           this.unmount();
@@ -166,14 +138,8 @@ export class NegotiationOverlay {
           input.value = '';
           input.focus();
         }
-      }, 2800);
-
-    } catch (_err) {
-      this.setStatus('Связь с боссом прервана. Попробуй ещё раз.');
-      this.pending = false;
-      input.disabled = false;
-      sendBtn.disabled = false;
-    }
+      }, 2000);
+    }, 600);
   }
 
   private setReply(text: string): void {
