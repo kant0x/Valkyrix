@@ -121,5 +121,5 @@ Plans:
 | 02.1. Menu and UX refresh | 0/0 | Planning | - |
 | 02.2. In-game menu and overlay UX | 3/3 | Complete | 2026-03-21 |
 | 3. Units, Buildings & Combat | 6/6 implemented | In Progress | - |
-| 4. Boss — Negotiation Mechanic | 0/4 | In Progress (replanned) | - |
+| 4. Boss — Negotiation Mechanic | 1/4 | In Progress|  |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |

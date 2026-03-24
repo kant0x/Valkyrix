@@ -1,81 +1,93 @@
 ---
 phase: 04-boss-negotiation-mechanic
 plan: "01"
-subsystem: game-types-unit-system
-tags: [types, boss, negotiation, unit-system]
-dependency_graph:
-  requires: []
-  provides: [BossNegotiationState, GameState.phase.negotiation, UnitSystem.boss-freeze]
-  affects: [src/game/game.types.ts, src/game/UnitSystemRuntime.ts]
-tech_stack:
+subsystem: game
+tags: [typescript, game-types, boss, negotiation]
+
+# Dependency graph
+requires: []
+provides:
+  - BossNegotiationState with scale? and attemptsLeft? fields
+  - GameState.elapsed?: number for timer accumulation
+  - createGameState() initializes elapsed: 0
+  - boss-enemy hp set to 500
+affects:
+  - 04-02-BossSystem (reads state.elapsed and bossNegotiation.scale/attemptsLeft)
+  - 04-03-NegotiationOverlay (reads bossNegotiation.scale/attemptsLeft)
+
+# Tech tracking
+tech-stack:
   added: []
-  patterns: [tdd, additive-type-extension, per-unit-phase-guard]
-key_files:
+  patterns:
+    - Optional fields added to interfaces for backward compatibility with existing tests
+
+key-files:
   created: []
   modified:
     - src/game/game.types.ts
-    - src/game/UnitSystemRuntime.ts
-    - src/game/GameState.test.ts
-    - src/game/UnitSystemRuntime.test.ts
-decisions:
-  - "Per-unit guard (not top-level) so collectors continue orbiting during negotiation phase"
-  - "BossNegotiationState.triggered prevents re-fire within a session"
-metrics:
-  duration_seconds: 171
-  completed_date: "2026-03-23"
-  tasks_completed: 2
-  files_modified: 4
+    - src/game/GameState.ts
+
+key-decisions:
+  - "elapsed added as optional (elapsed?: number) to GameState interface so existing test fixtures remain valid without modification"
+  - "scale and attemptsLeft added as optional to BossNegotiationState for same backward-compat reason"
+  - "boss-enemy hp raised from 260 to 500 per CONTEXT.md spec for meaningful negotiation window"
+
+patterns-established:
+  - "Additive-only interface changes: new fields are optional so downstream tests do not break"
+
+requirements-completed: [BOSS-01, BOSS-02, BOSS-03, BOSS-04]
+
+# Metrics
+duration: 5min
+completed: 2026-03-24
 ---
 
-# Phase 4 Plan 01: Type Contracts + UnitSystem Boss-Freeze Guard Summary
+# Phase 04 Plan 01: Type Contracts for Boss Negotiation Redesign Summary
 
-**One-liner:** Additive type extensions add negotiation phase, BossNegotiationState, and UnitDef.enraged to game.types.ts; UnitSystemRuntime gains a per-unit guard that freezes boss movement during negotiation.
+**Extended BossNegotiationState with scale/attemptsLeft, GameState with elapsed timer, and boss-enemy hp raised to 500 — all backward-compatible optional additions.**
 
-## What Was Built
+## Performance
 
-### Task 1: Extend game.types.ts with negotiation phase and boss metadata (commit: 661878a)
+- **Duration:** 5 min
+- **Started:** 2026-03-24T15:08:00Z
+- **Completed:** 2026-03-24T15:10:00Z
+- **Tasks:** 1
+- **Files modified:** 2
 
-- Extended `GameState.phase` union from `'playing' | 'paused' | 'won' | 'lost'` to include `'negotiation'`
-- Added `enraged?: boolean` to `UnitDef` (used by BossSystem when boss enters enraged mode)
-- Added `BossNegotiationState` interface: `{ active: boolean; triggered: boolean; outcome?: 'success' | 'failure' }`
-- Added `bossNegotiation?: BossNegotiationState` optional field to `GameState`
-- Added two new assertions to `GameState.test.ts` verifying phase initialization and negotiation acceptance
+## Accomplishments
+- BossNegotiationState gains `scale?: number` (0-12) and `attemptsLeft?: number` (starts at 3)
+- GameState interface gains `elapsed?: number` for accumulation by BossSystem during playing phase
+- createGameState() explicitly initializes `elapsed: 0` so runtime always has a defined numeric value
+- boss-enemy hp updated from 260 to 500 per CONTEXT.md spec to support meaningful negotiation window
 
-### Task 2: Add boss-freeze guard to UnitSystem.update (commit: 9eb8b87)
+## Task Commits
 
-- Added per-unit guard in the movement loop: boss units with `def.role === 'boss'` and `faction === 'enemy'` skip movement when `state.phase === 'negotiation'`
-- Guard placement is inside the per-unit loop, after the collector branch — collectors keep orbiting during negotiation
-- Added three new tests to `UnitSystemRuntime.test.ts`:
-  - Boss pathT stays frozen during negotiation
-  - Regular enemy advances normally during negotiation
-  - Boss advances normally during playing phase
+Each task was committed atomically:
+
+1. **Task 1: Extend BossNegotiationState, add elapsed to GameState, update boss hp** - `ba8d54a` (feat)
+
+**Plan metadata:** (see final docs commit)
+
+## Files Created/Modified
+- `src/game/game.types.ts` - Added scale?, attemptsLeft? to BossNegotiationState; elapsed? to GameState; boss-enemy hp 260->500
+- `src/game/GameState.ts` - Added elapsed: 0 to createGameState() return object
 
 ## Decisions Made
-
-- **Per-unit guard placement:** The guard is placed after the collector check inside the per-unit loop, not at the top of `update()`. This allows collector units to keep orbiting the citadel and harvesting crystals during a negotiation pause, which is the intended behavior.
-- **BossNegotiationState.triggered field:** Prevents the negotiation from re-triggering within a session if the player dismisses and re-enters a scenario where the boss HP threshold is crossed again.
+- Used optional fields (?) for all new additions to preserve backward compatibility with existing test fixtures that construct minimal GameState/BossNegotiationState objects without the new fields
+- boss-enemy hp raised to 500 as specified in CONTEXT.md to give BossSystem enough time window for negotiation trigger at ~120s elapsed
 
 ## Deviations from Plan
 
-None — plan executed exactly as written.
+None - plan executed exactly as written.
 
-## Pre-Existing Issues (Out of Scope)
+## Issues Encountered
+Pre-existing TypeScript errors in BuildingSystem.test.ts, ProjectileSystem.test.ts, ResourceSystem.test.ts, and GameRenderer.ts were present before this plan's changes. They are out of scope and logged as deferred items.
 
-The following were present before this plan and are not caused by these changes:
+## Next Phase Readiness
+- All type contracts are in place for 04-02 BossSystem rewrite
+- BossSystem can now read `state.elapsed` and write `bossNegotiation.scale`/`attemptsLeft`
+- NegotiationOverlay can read `bossNegotiation.scale`/`attemptsLeft` for display
 
-- `BuildingSystem.test.ts`: Several test fixtures missing `hp`/`maxHp` on Building objects (TS2345/TS2739)
-- `GameRenderer.ts`: Several unused variable declarations (TS6133)
-- `UnitSystemRuntime.test.ts`: "spawns ally units from authored ally path" pre-existing failure
-- `HudOverlay.test.ts`: Multiple pre-existing failures
-
-These are logged for deferred resolution.
-
-## Self-Check: PASSED
-
-Files confirmed present:
-- src/game/game.types.ts — contains `negotiation` in phase union and `BossNegotiationState` interface
-- src/game/UnitSystemRuntime.ts — contains negotiation guard at line 49
-
-Commits confirmed:
-- 661878a — feat(04-01): extend game.types.ts with negotiation phase and boss metadata
-- 9eb8b87 — feat(04-01): add boss-freeze guard to UnitSystem per-unit loop
+---
+*Phase: 04-boss-negotiation-mechanic*
+*Completed: 2026-03-24*
