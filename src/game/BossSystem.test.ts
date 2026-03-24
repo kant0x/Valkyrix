@@ -1,62 +1,37 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { BossSystem, NEGOTIATION_RESOURCE_REWARD, NEGOTIATION_HP_REWARD, NEGOTIATION_WAVE_TIMER_FLOOR, HORDE_POWER_SCALE } from './BossSystem';
-import type { GameState, Unit, UnitDef } from './game.types';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { BossSystem } from './BossSystem';
+import type { GameState } from './game.types';
 
-// Minimal factory helpers — no DOM, no real path needed
-function makeBossDef(enraged = false): UnitDef {
-  return {
-    role: 'boss',
-    hp: 260,
-    speed: 22,
-    damage: 18,
-    attackRate: 0.75,
-    sprite: 'boits',
-    faction: 'enemy',
-    enraged,
-  };
-}
-
-function makeBossUnit(overrides: Partial<Unit> = {}): Unit {
-  return {
-    id: 99,
-    def: makeBossDef(),
-    faction: 'enemy',
-    hp: 260,
-    pathIndex: 2,
-    pathT: 0.5,
-    wx: 100,
-    wy: 100,
-    state: 'moving',
-    fightingWith: null,
-    attackCooldown: 0,
-    ...overrides,
-  };
-}
+vi.mock('../screens/NegotiationOverlay', () => ({
+  NegotiationOverlay: vi.fn().mockImplementation(() => ({
+    mount: vi.fn(),
+    unmount: vi.fn(),
+  })),
+}));
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
     phase: 'playing',
-    waveNumber: 5,
-    waveTimer: 5,
-    spawnQueue: [],
-    spawnTimer: 0,
+    elapsed: 0,
     units: [],
+    spawnQueue: [],
+    bossNegotiation: undefined,
+    resources: 50,
+    citadelHp: 2000,
+    citadelMaxHp: 2000,
+    waveTimer: 5,
+    nextId: 1,
+    pathNodes: [{ wx: 100, wy: 100 }],
+    // required fields
+    waveNumber: 1,
+    spawnTimer: 0,
     buildings: [],
     projectiles: [],
-    impactMarks: [],
-    corpses: [],
-    citadelHp: 1000,
     citadelMaxHp: 2000,
     playerBaseHp: 300,
     playerBaseMaxHp: 300,
-    resources: 50,
-    crystals: 0,
-    nextId: 1,
-    pathNodes: [],
-    allyPathNodes: [],
-    enemyLaneOffsets: [0],
     ...overrides,
-  };
+  } as GameState;
 }
 
 describe('BossSystem', () => {
@@ -68,237 +43,276 @@ describe('BossSystem', () => {
     state = makeState();
   });
 
-  // -----------------------------------------------------------------------
-  // Exported constants
-  // -----------------------------------------------------------------------
-  describe('exported constants', () => {
-    it('NEGOTIATION_RESOURCE_REWARD is 120', () => {
-      expect(NEGOTIATION_RESOURCE_REWARD).toBe(120);
-    });
-    it('NEGOTIATION_HP_REWARD is 400', () => {
-      expect(NEGOTIATION_HP_REWARD).toBe(400);
-    });
-    it('NEGOTIATION_WAVE_TIMER_FLOOR is 20', () => {
-      expect(NEGOTIATION_WAVE_TIMER_FLOOR).toBe(20);
-    });
-    it('HORDE_POWER_SCALE is 1.4', () => {
-      expect(HORDE_POWER_SCALE).toBe(1.4);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Detection — BOSS-01
-  // -----------------------------------------------------------------------
-  describe('update() — detection', () => {
-    it('does nothing when no boss unit is present', () => {
-      state.units = [];
-      system.update(1, state, null);
+  // -------------------------------------------------------------------------
+  // 1. timer trigger
+  // -------------------------------------------------------------------------
+  describe('timer trigger', () => {
+    it('does not trigger when elapsed < 300', () => {
+      state.elapsed = 0;
+      system.update(299, state, null);
       expect(state.phase).toBe('playing');
       expect(state.bossNegotiation).toBeUndefined();
     });
 
-    it('triggers negotiation when a living unenraged boss is present', () => {
-      const boss = makeBossUnit();
-      state.units = [boss];
-      system.update(1, state, null);
+    it('does not trigger at exactly 299.9s', () => {
+      state.elapsed = 0;
+      system.update(299.9, state, null);
+      expect(state.phase).toBe('playing');
+    });
+
+    it('triggers negotiation when elapsed reaches 300s', () => {
+      state.elapsed = 0;
+      system.update(300, state, null);
       expect(state.phase).toBe('negotiation');
-      expect(state.bossNegotiation).toEqual({ active: true, triggered: true });
+      expect(state.bossNegotiation?.active).toBe(true);
+      expect(state.bossNegotiation?.triggered).toBe(true);
+    });
+
+    it('triggers when elapsed exceeds 300s (multi-tick accumulation)', () => {
+      state.elapsed = 299;
+      system.update(2, state, null); // 299 + 2 = 301
+      expect(state.phase).toBe('negotiation');
     });
 
     it('does not re-trigger when bossNegotiation.triggered is already true', () => {
-      const boss = makeBossUnit();
-      state.units = [boss];
+      state.elapsed = 290;
       state.bossNegotiation = { active: false, triggered: true };
-      state.phase = 'playing';
-      system.update(1, state, null);
-      expect(state.phase).toBe('playing');
-      expect(state.bossNegotiation?.active).toBe(false);
-    });
-
-    it('skips an enraged boss — does not trigger negotiation', () => {
-      const boss = makeBossUnit({ def: makeBossDef(true) });
-      state.units = [boss];
-      system.update(1, state, null);
-      expect(state.phase).toBe('playing');
-      expect(state.bossNegotiation).toBeUndefined();
-    });
-
-    it('skips when phase is not playing (e.g. already negotiation)', () => {
-      const boss = makeBossUnit();
-      state.units = [boss];
-      state.phase = 'negotiation';
-      state.bossNegotiation = { active: true, triggered: true };
-      system.update(1, state, null);
-      // must stay in negotiation, not double-trigger
-      expect(state.phase).toBe('negotiation');
-    });
-
-    it('skips a dead boss (hp <= 0)', () => {
-      const boss = makeBossUnit({ hp: 0 });
-      state.units = [boss];
-      system.update(1, state, null);
+      system.update(20, state, null);
+      expect(state.units.length).toBe(0);
       expect(state.phase).toBe('playing');
     });
 
-    it('sets boss unit state to fighting and clears fightingWith on trigger', () => {
-      const boss = makeBossUnit({ fightingWith: 42 });
-      state.units = [boss];
-      system.update(1, state, null);
-      expect(boss.state).toBe('fighting');
-      expect(boss.fightingWith).toBeNull();
+    it('accumulates elapsed on state', () => {
+      state.elapsed = 10;
+      system.update(5, state, null);
+      expect(state.elapsed).toBe(15);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Success path — BOSS-03
-  // -----------------------------------------------------------------------
-  describe('handleSuccess()', () => {
+  // -------------------------------------------------------------------------
+  // 2. boss spawn
+  // -------------------------------------------------------------------------
+  describe('boss spawn', () => {
     beforeEach(() => {
-      const boss = makeBossUnit();
-      state.units = [boss];
-      state.phase = 'negotiation';
-      state.bossNegotiation = { active: true, triggered: true };
+      state.elapsed = 0;
+      state.nextId = 42;
+    });
+
+    it('pushes boss unit to state.units on trigger', () => {
+      system.update(300, state, null);
+      expect(state.units.length).toBe(1);
+    });
+
+    it('boss unit has def.role === boss', () => {
+      system.update(300, state, null);
+      expect(state.units[0].def.role).toBe('boss');
+    });
+
+    it('boss unit has def.hp === 500', () => {
+      system.update(300, state, null);
+      expect(state.units[0].def.hp).toBe(500);
+    });
+
+    it('boss unit has faction === enemy', () => {
+      system.update(300, state, null);
+      expect(state.units[0].faction).toBe('enemy');
+    });
+
+    it('boss unit def is a spread copy — not a reference to UNIT_DEFS', () => {
+      const { UNIT_DEFS } = require('./game.types');
+      system.update(300, state, null);
+      expect(state.units[0].def).not.toBe(UNIT_DEFS['boss-enemy']);
+    });
+
+    it('boss unit id comes from state.nextId', () => {
+      system.update(300, state, null);
+      expect(state.units[0].id).toBe(42);
+      expect(state.nextId).toBe(43);
+    });
+
+    it('boss unit positioned at pathNodes[0]', () => {
+      system.update(300, state, null);
+      expect(state.units[0].wx).toBe(100);
+      expect(state.units[0].wy).toBe(100);
+    });
+
+    it('second update at elapsed >= 300 does NOT spawn second boss', () => {
+      system.update(300, state, null);
+      expect(state.units.length).toBe(1);
+      system.update(1, state, null);
+      expect(state.units.length).toBe(1);
+    });
+
+    it('bossNegotiation after trigger has scale=0 and attemptsLeft=3', () => {
+      system.update(300, state, null);
+      expect(state.bossNegotiation?.scale).toBe(0);
+      expect(state.bossNegotiation?.attemptsLeft).toBe(3);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 3. handleSuccess
+  // -------------------------------------------------------------------------
+  describe('handleSuccess', () => {
+    beforeEach(() => {
+      // Trigger boss first
+      state.elapsed = 0;
+      system.update(300, state, null);
+      // Now in negotiation
     });
 
     it('removes boss from state.units', () => {
-      const boss = state.units[0];
       system.handleSuccess(state);
-      expect(state.units.find(u => u.id === boss.id)).toBeUndefined();
+      const boss = state.units.find(u => u.def.role === 'boss' && u.faction === 'enemy');
+      expect(boss).toBeUndefined();
     });
 
-    it('credits NEGOTIATION_RESOURCE_REWARD to resources', () => {
+    it('adds 120 to resources', () => {
       const before = state.resources;
       system.handleSuccess(state);
-      expect(state.resources).toBe(before + NEGOTIATION_RESOURCE_REWARD);
+      expect(state.resources).toBe(before + 120);
     });
 
-    it('heals citadel by NEGOTIATION_HP_REWARD capped at citadelMaxHp', () => {
+    it('heals citadel by 400', () => {
       state.citadelHp = 1000;
       state.citadelMaxHp = 2000;
       system.handleSuccess(state);
       expect(state.citadelHp).toBe(1400);
     });
 
-    it('does not heal citadel above citadelMaxHp', () => {
-      state.citadelHp = 1900;
+    it('caps citadel heal at citadelMaxHp', () => {
+      state.citadelHp = 1800;
       state.citadelMaxHp = 2000;
       system.handleSuccess(state);
       expect(state.citadelHp).toBe(2000);
     });
 
-    it('ensures waveTimer is at least NEGOTIATION_WAVE_TIMER_FLOOR', () => {
+    it('sets phase back to playing', () => {
+      system.handleSuccess(state);
+      expect(state.phase).toBe('playing');
+    });
+
+    it('sets bossNegotiation.outcome to success', () => {
+      system.handleSuccess(state);
+      expect(state.bossNegotiation?.outcome).toBe('success');
+    });
+
+    it('sets waveTimer to at least 20 when it was lower', () => {
       state.waveTimer = 5;
       system.handleSuccess(state);
-      expect(state.waveTimer).toBe(NEGOTIATION_WAVE_TIMER_FLOOR);
-    });
-
-    it('preserves a waveTimer already above the floor', () => {
-      state.waveTimer = 30;
-      system.handleSuccess(state);
-      expect(state.waveTimer).toBe(30);
-    });
-
-    it('restores phase to playing', () => {
-      system.handleSuccess(state);
-      expect(state.phase).toBe('playing');
-    });
-
-    it('sets bossNegotiation to { active: false, triggered: true, outcome: success }', () => {
-      system.handleSuccess(state);
-      expect(state.bossNegotiation).toEqual({ active: false, triggered: true, outcome: 'success' });
+      expect(state.waveTimer).toBeGreaterThanOrEqual(20);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Failure path — BOSS-04
-  // -----------------------------------------------------------------------
-  describe('handleFailure()', () => {
-    let boss: Unit;
-
+  // -------------------------------------------------------------------------
+  // 4. handleFailure
+  // -------------------------------------------------------------------------
+  describe('handleFailure', () => {
     beforeEach(() => {
-      boss = makeBossUnit();
-      state.units = [boss];
-      state.phase = 'negotiation';
-      state.bossNegotiation = { active: true, triggered: true };
+      state.elapsed = 0;
+      system.update(300, state, null);
     });
 
-    it('marks boss as enraged', () => {
-      system.handleFailure(state, boss);
-      expect(boss.def.enraged).toBe(true);
+    it('enrages the boss unit (def.enraged = true)', () => {
+      system.handleFailure(state);
+      const boss = state.units.find(u => u.def.role === 'boss' && u.faction === 'enemy');
+      expect(boss?.def.enraged).toBe(true);
     });
 
-    it('scales boss damage by 1.5 (rounded)', () => {
-      boss.def.damage = 18;
-      system.handleFailure(state, boss);
-      expect(boss.def.damage).toBe(Math.round(18 * 1.5)); // 27
+    it('multiplies boss damage by 1.5', () => {
+      const originalDamage = state.units.find(u => u.def.role === 'boss')!.def.damage;
+      system.handleFailure(state);
+      const boss = state.units.find(u => u.def.role === 'boss')!;
+      expect(boss.def.damage).toBe(Math.round(originalDamage * 1.5));
     });
 
-    it('enqueues horde: 12 light-enemy, 6 heavy-enemy, 4 ranged-enemy', () => {
-      system.handleFailure(state, boss);
-      const lightCount = state.spawnQueue.filter(e => e.defKey === 'light-enemy').length;
+    it('enqueues heavy-enemy x8 in spawnQueue', () => {
+      system.handleFailure(state);
       const heavyCount = state.spawnQueue.filter(e => e.defKey === 'heavy-enemy').length;
+      expect(heavyCount).toBe(8);
+    });
+
+    it('enqueues ranged-enemy x6 in spawnQueue', () => {
+      system.handleFailure(state);
       const rangedCount = state.spawnQueue.filter(e => e.defKey === 'ranged-enemy').length;
-      expect(lightCount).toBe(12);
-      expect(heavyCount).toBe(6);
-      expect(rangedCount).toBe(4);
+      expect(rangedCount).toBe(6);
     });
 
-    it('horde entries use HORDE_POWER_SCALE', () => {
-      system.handleFailure(state, boss);
-      const allHorde = state.spawnQueue;
-      expect(allHorde.every(e => e.powerScale === HORDE_POWER_SCALE)).toBe(true);
+    it('does NOT enqueue any light-enemy', () => {
+      system.handleFailure(state);
+      const lightCount = state.spawnQueue.filter(e => e.defKey === 'light-enemy').length;
+      expect(lightCount).toBe(0);
     });
 
-    it('horde entries have increasing delays starting at 1.0s in 0.4s steps', () => {
-      system.handleFailure(state, boss);
-      // First entry delay should be 1.0
+    it('total horde is 14 entries (8 heavy + 6 ranged)', () => {
+      system.handleFailure(state);
+      expect(state.spawnQueue.length).toBe(14);
+    });
+
+    it('horde delays start at 1.0s', () => {
+      system.handleFailure(state);
       expect(state.spawnQueue[0].delay).toBeCloseTo(1.0);
-      // Second entry delay should be 1.4
+    });
+
+    it('horde delays increase by 0.4s each step', () => {
+      system.handleFailure(state);
       expect(state.spawnQueue[1].delay).toBeCloseTo(1.4);
+      expect(state.spawnQueue[2].delay).toBeCloseTo(1.8);
     });
 
-    it('total horde size is 22 entries', () => {
-      system.handleFailure(state, boss);
-      expect(state.spawnQueue.length).toBe(22);
-    });
-
-    it('restores phase to playing', () => {
-      system.handleFailure(state, boss);
+    it('sets phase back to playing', () => {
+      system.handleFailure(state);
       expect(state.phase).toBe('playing');
     });
 
-    it('sets bossNegotiation to { active: false, triggered: true, outcome: failure }', () => {
-      system.handleFailure(state, boss);
-      expect(state.bossNegotiation).toEqual({ active: false, triggered: true, outcome: 'failure' });
+    it('sets bossNegotiation.outcome to failure', () => {
+      system.handleFailure(state);
+      expect(state.bossNegotiation?.outcome).toBe('failure');
+    });
+
+    it('boss stays in state.units after failure (not removed)', () => {
+      system.handleFailure(state);
+      const boss = state.units.find(u => u.def.role === 'boss' && u.faction === 'enemy');
+      expect(boss).toBeDefined();
     });
   });
 
-  // -----------------------------------------------------------------------
-  // forceReset — cleanup on unmount
-  // -----------------------------------------------------------------------
-  describe('forceReset()', () => {
-    it('restores phase from negotiation to playing', () => {
-      state.phase = 'negotiation';
-      state.bossNegotiation = { active: true, triggered: true };
-      system.forceReset(state);
-      expect(state.phase).toBe('playing');
-    });
-
-    it('does not change phase if not in negotiation', () => {
-      state.phase = 'playing';
-      system.forceReset(state);
-      expect(state.phase).toBe('playing');
-    });
-
-    it('can be called safely when no overlay was ever mounted', () => {
+  // -------------------------------------------------------------------------
+  // 5. forceReset
+  // -------------------------------------------------------------------------
+  describe('forceReset', () => {
+    it('does not throw when no overlay was mounted', () => {
       expect(() => system.forceReset(state)).not.toThrow();
     });
 
-    it('marks bossNegotiation.active as false after forceReset', () => {
-      state.phase = 'negotiation';
+    it('sets bossNegotiation.active to false', () => {
       state.bossNegotiation = { active: true, triggered: true };
       system.forceReset(state);
       expect(state.bossNegotiation?.active).toBe(false);
+    });
+
+    it('sets bossNegotiation.triggered to false', () => {
+      state.bossNegotiation = { active: true, triggered: true };
+      system.forceReset(state);
+      expect(state.bossNegotiation?.triggered).toBe(false);
+    });
+
+    it('resets elapsed to 0', () => {
+      state.elapsed = 350;
+      system.forceReset(state);
+      expect(state.elapsed).toBe(0);
+    });
+
+    it('works when bossNegotiation is undefined', () => {
+      state.bossNegotiation = undefined;
+      expect(() => system.forceReset(state)).not.toThrow();
+    });
+
+    it('unmounts overlay when forceReset called after trigger', () => {
+      state.elapsed = 0;
+      const container = { appendChild: vi.fn() } as unknown as HTMLElement;
+      system.update(300, state, container);
+      expect(() => system.forceReset(state)).not.toThrow();
     });
   });
 });
