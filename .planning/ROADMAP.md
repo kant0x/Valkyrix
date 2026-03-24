@@ -84,21 +84,22 @@ Plans:
 - [ ] 03-06-PLAN.md — Wire all systems into main.ts + human verification checkpoint (wave 4)
 
 ### Phase 4: Boss — Negotiation Mechanic
-**Goal**: Босс появляется на поле как особый юнит. Игрок видит диалог-переговоры. Два исхода: договорились (босс уходит, игрок получает баффы) или провал (босс злой, призывает орду юнитов).
+**Goal**: Босс-робот появляется через 5 минут от старта. Всё замирает. Игрок убеждает босса не забирать Священный Грааль через свободный текстовый диалог с Gemini AI. Шкала убеждения, попытки, три исхода (good/neutral/bad).
 **Depends on**: Phase 3
 **Requirements**: BOSS-01, BOSS-02, BOSS-03, BOSS-04
 **Success Criteria** (what must be TRUE):
-  1. Босс появляется на карте по условию (триггер волны / событие).
-  2. Игроку показывается диалог-переговоры с несколькими вариантами ответа.
-  3. Успешные переговоры: босс уходит, игрок получает конкретные баффы.
-  4. Провал: босс остаётся злым, вызывает орду своих юнитов, боёвка усиливается.
+  1. Босс-робот появляется ровно через 5 минут от старта игры, все юниты замирают.
+  2. Открывается окно переговоров: игрок пишет свободный текст, Gemini отвечает в образе босса и оценивает (good/neutral/bad).
+  3. Шкала успеха (0→12): хороший ответ +4, нейтральный +2 (+2 бонусных попытки), плохой +0 (сгорает попытка). Старт — 3 попытки.
+  4. Шкала ≥12 → договорились: босс уходит, начисляются очки (Phase 5 chain).
+  5. Попытки = 0 и шкала <12 → провал: огромная орда сильных врагов (heavy + ranged, без light).
 **Plans**: 4 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Extend game.types.ts (negotiation phase, UnitDef.enraged, BossNegotiationState) + UnitSystem boss-freeze guard (wave 1)
-- [ ] 04-02-PLAN.md — BossSystem: detection, success/failure outcomes, horde enqueue, forceReset (wave 2, TDD)
-- [ ] 04-03-PLAN.md — NegotiationOverlay: modal DOM class with two choice buttons (wave 2, TDD, parallel)
-- [ ] 04-04-PLAN.md — Wire BossSystem into main.ts rAF loop + human verification checkpoint (wave 3)
+- [ ] 04-01-PLAN.md — Extend game.types.ts (BossNegotiationState + elapsed + boss hp=500) + GameState.ts (wave 1)
+- [ ] 04-02-PLAN.md — Rewrite BossSystem.ts + BossSystem.test.ts: timer trigger, spawn, success/failure handlers (wave 2)
+- [ ] 04-03-PLAN.md — Rewrite NegotiationOverlay.ts + NegotiationOverlay.test.ts: scale bar, attempts, 3-outcome Gemini (wave 2, parallel)
+- [ ] 04-04-PLAN.md — Full test suite + human verification checkpoint (wave 3)
 
 ### Phase 5: Multiplayer & Blockchain Leaderboard
 **Goal**: Настоящий мультиплеер запущен, каждый убитый юнит — транзакция через MagicBlock, лидерборд хранится на блокчейне и отображается в игре.
@@ -120,5 +121,5 @@ Plans:
 | 02.1. Menu and UX refresh | 0/0 | Planning | - |
 | 02.2. In-game menu and overlay UX | 3/3 | Complete | 2026-03-21 |
 | 3. Units, Buildings & Combat | 6/6 implemented | In Progress | - |
-| 4. Boss — Negotiation Mechanic | 3/4 | In Progress|  |
+| 4. Boss — Negotiation Mechanic | 0/4 | In Progress (replanned) | - |
 | 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |
