@@ -328,6 +328,32 @@ function dedupeSequential(nodes: PathNode[]): PathNode[] {
   return result;
 }
 
+function buildAllyPath(
+  citadelNode: PathNode | null,
+  pathNodes: PathNode[],
+  tileWidth: number,
+  tileHeight: number,
+): PathNode[] {
+  const reversed = [...pathNodes].reverse();
+  if (!citadelNode) return reversed;
+  if (reversed.length === 0) return [citadelNode];
+
+  const minJoinDistance = Math.max(18, tileHeight * 0.85);
+  const verticalTolerance = Math.max(10, tileWidth * 0.18);
+  let joinIndex = 0;
+
+  while (joinIndex < reversed.length - 1) {
+    const candidate = reversed[joinIndex];
+    const dx = candidate.wx - citadelNode.wx;
+    const dy = candidate.wy - citadelNode.wy;
+    const isTinyVerticalHop = Math.abs(dx) <= verticalTolerance && Math.hypot(dx, dy) < minJoinDistance;
+    if (!isTinyVerticalHop) break;
+    joinIndex += 1;
+  }
+
+  return dedupeSequential([citadelNode, ...reversed.slice(joinIndex)]);
+}
+
 function findNearestNodeIndex(nodes: PathNode[], target: PathNode): { index: number; distance: number } {
   let bestIndex = -1;
   let bestDistance = Number.POSITIVE_INFINITY;
@@ -417,6 +443,9 @@ export function createGameState(mapJson: any): GameState {
   const maskPath = resolvePathFromMask(mapJson, portalSpawn);
   const sceneRailPath = resolveSceneRailPath(mapJson);
   const enemyLaneOffsets = resolveEnemyLaneOffsets(mapJson, portalSpawn);
+  const citadelNode = normalizeRailNode(mapJson.scene?.citadel);
+  const tileWidth = mapJson.tileWidth ?? 64;
+  const tileHeight = mapJson.tileHeight ?? 32;
   const pathNodes = maskPath.length >= 2
     ? maskPath
     : sceneRailPath.length >= 2
@@ -424,11 +453,12 @@ export function createGameState(mapJson: any): GameState {
     : extractOrderedPath(
         mapJson.layers?.paths ?? [],
         mapJson.width ?? 70,
-        mapJson.tileWidth ?? 64,
-        mapJson.tileHeight ?? 32,
+        tileWidth,
+        tileHeight,
         portalWx,
         portalWy,
       );
+  const allyPathNodes = buildAllyPath(citadelNode, pathNodes, tileWidth, tileHeight);
   return {
     phase: 'playing',
     waveNumber: 0,
@@ -438,13 +468,18 @@ export function createGameState(mapJson: any): GameState {
     units: [],
     buildings: [],
     projectiles: [],
-    citadelHp: 500,
-    citadelMaxHp: 500,
+    impactMarks: [],
+    corpses: [],
+    citadelHp: 2000,
+    citadelMaxHp: 2000,
     playerBaseHp: 300,
     playerBaseMaxHp: 300,
     resources: 100,
+    crystals: 0,
+    elapsed: 0,
     nextId: 1,
     pathNodes,
+    allyPathNodes,
     enemyLaneOffsets,
   };
 }

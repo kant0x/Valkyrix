@@ -103,6 +103,8 @@ export interface BossNegotiationState {
   active: boolean;
   triggered: boolean;   // true = negotiation has fired this session (prevents re-fire)
   outcome?: 'success' | 'failure';
+  scale?: number;        // 0–12, persisted for overlay remount
+  attemptsLeft?: number; // starts at 3
 }
 
 export interface GameState {
@@ -123,6 +125,7 @@ export interface GameState {
   resources: number;         // electrolatov
   crystals?: number;         // salvage dropped by enemies and processed by collectors
   bossNegotiation?: BossNegotiationState;  // populated by BossSystem during negotiation phase
+  elapsed?: number;          // seconds since game start, accumulated by BossSystem during 'playing' phase
   nextId: number;            // auto-increment for unit/building IDs
   pathNodes: PathNode[];     // enemy direction: index 0 = portal, last = citadel
   allyPathNodes?: PathNode[]; // ally direction: starts at citadel, then joins the reversed combat path
@@ -151,7 +154,7 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
   },
   'boss-enemy': {
     role: 'boss',
-    hp: 260,
+    hp: 500,
     speed: 22,
     damage: 18,
     attackRate: 0.75,
