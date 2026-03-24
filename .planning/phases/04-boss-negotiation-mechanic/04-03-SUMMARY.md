@@ -2,77 +2,95 @@
 phase: 04-boss-negotiation-mechanic
 plan: "03"
 subsystem: negotiation-overlay
-tags: [tdd, dom, overlay, boss, negotiation]
+tags: [overlay, gemini, tdd, jsdom, ui]
 dependency_graph:
   requires: [04-01]
-  provides: [NegotiationOverlay, NegotiationCallbacks]
-  affects: [src/screens/NegotiationOverlay.ts, src/screens/NegotiationOverlay.test.ts]
+  provides: [NegotiationOverlay, NegotiationMountOptions]
+  affects: [BossSystem, GameScreen]
 tech_stack:
   added: []
-  patterns: [tdd, dom-component, idempotent-mount, inline-style-guard]
+  patterns: [tdd-red-green, vi-fake-timers, vi-stub-global-fetch, style-injection-guard]
 key_files:
-  created:
+  created: []
+  modified:
     - src/screens/NegotiationOverlay.ts
     - src/screens/NegotiationOverlay.test.ts
-  modified: []
 decisions:
-  - "Overlay appended to document.body (not container param) matching HudOverlay.showWinLossOverlay idiom"
-  - "Inline style injected to document.head with STYLE_ID guard to avoid duplicate injection"
-  - "unmount() clears both this.el ref and removes by id as safety fallback (same pattern as HudOverlay)"
+  - "Overlay appends to container (document.body) — always consistent with BossSystem usage"
+  - "flushPromises() helper (3x await Promise.resolve) needed to drain nested .json() promise chain in jsdom"
+  - "vi.fn() cast to () => void to satisfy NegotiationMountOptions strict typing"
+  - "Pending guard checks this.pending at start of sendMessage, not input.disabled state"
 metrics:
-  duration_seconds: 92
-  completed_date: "2026-03-23"
+  duration: "~3 minutes"
+  completed: "2026-03-24"
   tasks_completed: 2
   files_modified: 2
 ---
 
-# Phase 4 Plan 03: NegotiationOverlay DOM Modal Summary
+# Phase 04 Plan 03: NegotiationOverlay Rewrite Summary
 
-**One-liner:** Self-contained DOM overlay presenting boss negotiation choices (Offer tribute / Defy it) with jsdom-tested callbacks and idempotent mount following the HudOverlay pattern.
+Full rewrite of NegotiationOverlay with scale bar (0-12), attempts counter, three-outcome Gemini integration (good/neutral/bad), pending guard, and complete jsdom test coverage (8 tests GREEN).
 
 ## What Was Built
 
-### Task 1 (TDD RED): Failing test suite for NegotiationOverlay (commit: 4b4ca51)
+### NegotiationOverlay.ts
 
-- Created `src/screens/NegotiationOverlay.test.ts` with 8 jsdom tests covering all BOSS-02 behaviors
-- Tests verified to fail before implementation existed
-- Coverage: mount creates body element, two buttons present with correct text, offer fires onSuccess, defy fires onFailure, both buttons unmount the overlay, unmount() removes element, double-mount idempotent
+Complete replacement of the old binary success/failure overlay with a multi-attempt, scale-based negotiation system:
 
-### Task 2 (TDD GREEN): NegotiationOverlay implementation (commit: 15a6382)
+- **Scale bar** (`vk-neg-scale-fill`, `vk-neg-scale-label`) showing current/max (N / 12) with CSS gradient fill
+- **Attempts counter** (`vk-neg-attempts`) displaying `Попыток: N`
+- **3-outcome Gemini integration**: regex `/\{"outcome"\s*:\s*"(good|neutral|bad)"\}/` against raw API response
+  - `good`: `scale = Math.min(12, scale + 4)`
+  - `neutral`: `scale = Math.min(12, scale + 2)`, `attemptsLeft += 2`
+  - `bad`: `attemptsLeft -= 1`
+- **Terminal conditions** checked after 2800ms setTimeout: `scale >= 12` calls `onSuccess`; `attemptsLeft <= 0` calls `onFailure`
+- **Pending guard**: `private pending = false` set on entry, cleared on re-enable or error
+- **JSON stripping**: `raw.replace(/\{[^}]*\}/, '').trim()` before displaying boss reply
+- **STYLE_ID guard** prevents duplicate style injection on remount
+- **`NegotiationMountOptions`** exported (imported by BossSystem in plan 04-02)
 
-- Created `src/screens/NegotiationOverlay.ts` exporting `NegotiationCallbacks` type and `NegotiationOverlay` class
-- `mount(container, cbs)`: idempotent guard via `document.getElementById(OVERLAY_ID)`, appends to `document.body`
-- `unmount()`: removes element and clears internal ref, id-based fallback removal
-- `ensureStyle()`: injects `<style id="vk-neg-style">` once into `document.head`
-- Styling: position:fixed, full viewport inset:0, z-index:120, dark semi-transparent backdrop, amber/gold border panel matching vk- design language
-- Boss name "Devourer of Worlds", parley rune label, flavor text, two action buttons with ids `vk-neg-offer` and `vk-neg-defy`
-- All 8 tests pass; full suite 150 passed (6 pre-existing failures unrelated to this plan)
+### NegotiationOverlay.test.ts
 
-## Decisions Made
+Complete rewrite of test suite (8 tests, all GREEN):
 
-- **Overlay appends to document.body:** Follows the `HudOverlay.showWinLossOverlay` idiom exactly. The `container` parameter is accepted for API consistency but the overlay always mounts to body for full-viewport coverage.
-- **Inline style with STYLE_ID guard:** `ensureStyle()` checks for `vk-neg-style` before injecting, preventing duplicate `<style>` tags on repeated mount/unmount cycles.
-- **unmount() double-clear:** `this.el?.remove()` handles the normal case; `document.getElementById(OVERLAY_ID)?.remove()` is the safety fallback matching HudOverlay.unmount() behavior.
+1. Mount renders scale bar and attempts counter
+2. Good outcome: scale increases by 4
+3. Neutral outcome: scale increases by 2, attemptsLeft increases by 2
+4. Bad outcome: attemptsLeft decreases by 1, scale unchanged
+5. Success terminal: scale >= 12 calls onSuccess after 2800ms
+6. Failure terminal: attemptsLeft = 0 calls onFailure after 2800ms
+7. Pending guard prevents double-submit
+8. Unmount removes overlay from DOM
+
+## Commits
+
+| Task | Commit | Description |
+|------|--------|-------------|
+| Task 1 (RED) | 6c523a7 | test(04-03): add failing tests for scale/attempts/3-outcome |
+| Task 2 (GREEN) | 46eeff1 | feat(04-03): rewrite NegotiationOverlay with scale bar, attempts, 3-outcome Gemini |
 
 ## Deviations from Plan
 
-None — plan executed exactly as written.
+### Auto-fixed Issues
 
-## Pre-Existing Test Failures (Out of Scope)
+**1. [Rule 1 - Bug] Fixed Promise flushing in async tests**
+- **Found during:** Task 2 (GREEN phase)
+- **Issue:** `vi.runAllTicks()` does not drain the nested `.json()` promise chain — fetch mock resolves via two microtask levels (`Promise.resolve` wrapping `Promise.resolve`)
+- **Fix:** Added `flushPromises()` helper (3x `await Promise.resolve()`) and replaced `vi.runAllTicks()` calls in all async test cases
+- **Files modified:** `src/screens/NegotiationOverlay.test.ts`
+- **Commit:** 46eeff1
 
-The following failures were present before this plan and are not caused by these changes:
-
-- `HudOverlay.test.ts`: "writes citadel health values into the lower panel" and "renders crystal values in the lower deck" (pre-existing)
-- `UnitSystemRuntime.test.ts`: "spawns ally units from authored ally path" (pre-existing)
-
-These were documented in 04-01-SUMMARY.md and remain deferred.
+**2. [Rule 1 - Bug] Fixed vi.fn() type assignment**
+- **Found during:** Task 2 (TypeScript check)
+- **Issue:** `vi.fn()` return type `Mock<Procedure | Constructable>` is not assignable to `() => void` in strict TypeScript
+- **Fix:** Declared `onSuccess`/`onFailure` as `() => void`, cast `vi.fn() as () => void` on assignment
+- **Files modified:** `src/screens/NegotiationOverlay.test.ts`
+- **Commit:** 46eeff1
 
 ## Self-Check: PASSED
 
-Files confirmed present:
-- src/screens/NegotiationOverlay.ts — exports NegotiationOverlay and NegotiationCallbacks
-- src/screens/NegotiationOverlay.test.ts — 8 passing tests in describe('NegotiationOverlay')
-
-Commits confirmed:
-- 4b4ca51 — test(04-03): add failing tests for NegotiationOverlay
-- 15a6382 — feat(04-03): implement NegotiationOverlay DOM modal
+- [x] `src/screens/NegotiationOverlay.ts` exists and exported `NegotiationOverlay` class + `NegotiationMountOptions` type
+- [x] `src/screens/NegotiationOverlay.test.ts` exists with 8 tests
+- [x] All 8 tests pass: `npx vitest run src/screens/NegotiationOverlay.test.ts` — 8 passed
+- [x] No NegotiationOverlay TypeScript errors: `npx tsc --noEmit` produces no errors for these files
+- [x] Commits 6c523a7 and 46eeff1 exist in git log
