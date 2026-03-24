@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BossSystem } from './BossSystem';
 import type { GameState } from './game.types';
 
-vi.mock('../screens/NegotiationOverlay', () => ({
-  NegotiationOverlay: vi.fn().mockImplementation(() => ({
-    mount: vi.fn(),
-    unmount: vi.fn(),
-  })),
-}));
+vi.mock('../screens/NegotiationOverlay', () => {
+  class MockNegotiationOverlay {
+    mount = vi.fn();
+    unmount = vi.fn();
+  }
+  return { NegotiationOverlay: MockNegotiationOverlay };
+});
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
@@ -27,7 +28,6 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     spawnTimer: 0,
     buildings: [],
     projectiles: [],
-    citadelMaxHp: 2000,
     playerBaseHp: 300,
     playerBaseMaxHp: 300,
     ...overrides,
@@ -118,8 +118,8 @@ describe('BossSystem', () => {
       expect(state.units[0].faction).toBe('enemy');
     });
 
-    it('boss unit def is a spread copy — not a reference to UNIT_DEFS', () => {
-      const { UNIT_DEFS } = require('./game.types');
+    it('boss unit def is a spread copy — not a reference to UNIT_DEFS', async () => {
+      const { UNIT_DEFS } = await import('./game.types');
       system.update(300, state, null);
       expect(state.units[0].def).not.toBe(UNIT_DEFS['boss-enemy']);
     });
