@@ -14,16 +14,24 @@ function makeFetchMock(outcomeText: string) {
   });
 }
 
+// Flush all pending promises (multiple microtask queues)
+async function flushPromises() {
+  // Two levels needed: fetch.then() and response.json().then()
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('NegotiationOverlay', () => {
   let overlay: NegotiationOverlay;
-  let onSuccess: ReturnType<typeof vi.fn>;
-  let onFailure: ReturnType<typeof vi.fn>;
+  let onSuccess: () => void;
+  let onFailure: () => void;
 
   beforeEach(() => {
     vi.useFakeTimers();
     overlay = new NegotiationOverlay();
-    onSuccess = vi.fn();
-    onFailure = vi.fn();
+    onSuccess = vi.fn() as () => void;
+    onFailure = vi.fn() as () => void;
   });
 
   afterEach(() => {
@@ -64,7 +72,7 @@ describe('NegotiationOverlay', () => {
     input.value = 'Я предлагаю золото';
 
     sendBtn.click();
-    await vi.runAllTicks();
+    await flushPromises();
 
     const labelEl = document.getElementById('vk-neg-scale-label');
     expect(labelEl?.textContent).toContain('4');
@@ -86,7 +94,7 @@ describe('NegotiationOverlay', () => {
     input.value = 'Может договоримся?';
 
     sendBtn.click();
-    await vi.runAllTicks();
+    await flushPromises();
 
     // scale 0+2=2
     const labelEl = document.getElementById('vk-neg-scale-label');
@@ -112,7 +120,7 @@ describe('NegotiationOverlay', () => {
     input.value = 'Ты проиграешь!';
 
     sendBtn.click();
-    await vi.runAllTicks();
+    await flushPromises();
 
     // scale stays 0
     const labelEl = document.getElementById('vk-neg-scale-label');
@@ -139,7 +147,7 @@ describe('NegotiationOverlay', () => {
     input.value = 'Мы заключим союз';
 
     sendBtn.click();
-    await vi.runAllTicks(); // resolve fetch promises
+    await flushPromises(); // resolve fetch promises
 
     // Should NOT have called onSuccess yet (waiting for 2800ms)
     expect(onSuccess).not.toHaveBeenCalled();
@@ -173,7 +181,7 @@ describe('NegotiationOverlay', () => {
     input.value = 'Ты проиграешь!';
 
     sendBtn.click();
-    await vi.runAllTicks();
+    await flushPromises();
 
     expect(onFailure).not.toHaveBeenCalled();
 
@@ -202,7 +210,7 @@ describe('NegotiationOverlay', () => {
     // Second click while still pending — should be ignored
     sendBtn.click();
 
-    await vi.runAllTicks();
+    await flushPromises();
 
     // fetch should have been called only once
     expect(fetchMock).toHaveBeenCalledTimes(1);
