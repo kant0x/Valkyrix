@@ -1,4 +1,5 @@
-import { getOpening, getResponse } from '../game/BossDialog';
+import { getPhase, SUCCESS_THRESHOLD } from '../game/BossDialog';
+import type { DialogChoice } from '../game/BossDialog';
 
 const OVERLAY_ID = 'vk-neg-overlay';
 const STYLE_ID = 'vk-neg-styles';
@@ -6,61 +7,42 @@ const STYLE_ID = 'vk-neg-styles';
 export type NegotiationMountOptions = {
   onSuccess: () => void;
   onFailure: () => void;
-  initialScale?: number;
-  initialAttempts?: number;
 };
 
 export class NegotiationOverlay {
   private el: HTMLElement | null = null;
-  private scale = 0;
-  private attemptsLeft = 3;
-  private pending = false;
+  private persuasionPoints = 0;
 
   mount(container: HTMLElement, opts: NegotiationMountOptions): void {
-    // Prevent duplicate overlays
     if (document.getElementById(OVERLAY_ID)) return;
 
-    // Initialise state from options
-    this.scale = opts.initialScale ?? 0;
-    this.attemptsLeft = opts.initialAttempts ?? 3;
-    this.pending = false;
-
+    this.persuasionPoints = 0;
     this.ensureStyle();
 
     this.el = document.createElement('div');
     this.el.id = OVERLAY_ID;
     this.el.innerHTML = `
-      <div class="vk-neg-panel">
-        <div class="vk-neg-boss-area">
-          <div class="vk-neg-boss-name">Пожиратель Миров</div>
+      <div class="vk-neg-wrap">
+        <div class="vk-neg-boss-panel">
+          <div class="vk-neg-boss-name">⚔ НОЧНОЙ ОХОТНИК</div>
+          <div class="vk-neg-phase-label" id="vk-neg-phase">Фаза 1 / 4</div>
+          <p class="vk-neg-boss-text" id="vk-neg-boss-text"></p>
         </div>
-        <p class="vk-neg-reply" id="vk-neg-reply">"${getOpening()}"</p>
-
-        <div class="vk-neg-scale-wrap">
-          <div class="vk-neg-scale-track">
-            <div class="vk-neg-scale-fill" id="vk-neg-scale-fill"></div>
+        <div class="vk-neg-player-panel">
+          <div class="vk-neg-persuasion-wrap">
+            <div class="vk-neg-persuasion-track">
+              <div class="vk-neg-persuasion-fill" id="vk-neg-persuasion-fill"></div>
+            </div>
+            <div class="vk-neg-persuasion-label" id="vk-neg-persuasion-label">Убеждение: 0 / 100</div>
           </div>
-          <div class="vk-neg-scale-label" id="vk-neg-scale-label">0 / 12</div>
+          <div class="vk-neg-choices" id="vk-neg-choices"></div>
+          <div class="vk-neg-status" id="vk-neg-status"></div>
         </div>
-        <div class="vk-neg-attempts" id="vk-neg-attempts">Попыток: ${this.attemptsLeft}</div>
-
-        <input id="vk-neg-input" class="vk-neg-input" type="text"
-               placeholder="Что предлагаешь боссу?" maxlength="300" autocomplete="off" />
-        <button id="vk-neg-send" class="vk-neg-send" type="button">Отправить</button>
-        <div id="vk-neg-status" class="vk-neg-status"></div>
       </div>
     `;
 
     container.appendChild(this.el);
-    this.updateUI();
-
-    const input = this.el.querySelector<HTMLInputElement>('#vk-neg-input')!;
-    const sendBtn = this.el.querySelector<HTMLButtonElement>('#vk-neg-send')!;
-
-    const send = () => this.sendMessage(input, sendBtn, opts);
-    sendBtn.addEventListener('click', send);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
-    input.focus();
+    this.showPhase(1, opts);
   }
 
   unmount(): void {
@@ -69,87 +51,76 @@ export class NegotiationOverlay {
     document.getElementById(OVERLAY_ID)?.remove();
   }
 
-  private updateUI(): void {
-    const fill = document.getElementById('vk-neg-scale-fill');
-    if (fill) {
-      (fill as HTMLElement).style.width = `${(this.scale / 12) * 100}%`;
+  private showPhase(phaseId: number, opts: NegotiationMountOptions): void {
+    const phase = getPhase(phaseId);
+    if (!phase) return;
+
+    // Phase label: 1 and 2 both show as "Фаза 1", 3→2, 4→3/4
+    const phaseEl = document.getElementById('vk-neg-phase');
+    if (phaseEl) {
+      const display = phaseId <= 2 ? 1 : phaseId - 1;
+      phaseEl.textContent = `Фаза ${display} / 4`;
     }
 
-    const label = document.getElementById('vk-neg-scale-label');
-    if (label) {
-      label.textContent = `${this.scale} / 12`;
+    const textEl = document.getElementById('vk-neg-boss-text');
+    if (textEl) textEl.textContent = `"${phase.bossText}"`;
+
+    // Render choice buttons
+    const choicesEl = document.getElementById('vk-neg-choices');
+    if (choicesEl) {
+      choicesEl.innerHTML = '';
+      phase.choices.forEach(choice => {
+        const btn = document.createElement('button');
+        btn.className = 'vk-neg-choice';
+        btn.textContent = choice.text;
+        btn.addEventListener('click', () => this.onChoiceClick(choice, opts));
+        choicesEl.appendChild(btn);
+      });
     }
 
-    const attempts = document.getElementById('vk-neg-attempts');
-    if (attempts) {
-      attempts.textContent = `Попыток: ${this.attemptsLeft}`;
-    }
+    const statusEl = document.getElementById('vk-neg-status');
+    if (statusEl) statusEl.textContent = '';
   }
 
-  private sendMessage(
-    input: HTMLInputElement,
-    sendBtn: HTMLButtonElement,
-    opts: NegotiationMountOptions,
-  ): void {
-    // Pending guard — prevent double-submit
-    if (this.pending) return;
+  private onChoiceClick(choice: DialogChoice, opts: NegotiationMountOptions): void {
+    // Disable all buttons immediately (prevent double-click)
+    document.querySelectorAll<HTMLButtonElement>('.vk-neg-choice').forEach(b => {
+      b.disabled = true;
+    });
 
-    const text = input.value.trim();
-    if (!text) return;
+    // Apply persuasion points (clamp 0–100)
+    this.persuasionPoints = Math.max(0, Math.min(100, this.persuasionPoints + choice.points));
+    this.updatePersuasionUI();
 
-    this.pending = true;
-    input.disabled = true;
-    sendBtn.disabled = true;
-    this.setStatus('Пожиратель Миров думает...');
+    // Show feedback
+    const statusEl = document.getElementById('vk-neg-status');
+    if (statusEl) {
+      statusEl.textContent =
+        choice.points > 0 ? `+${choice.points} к убеждению` :
+        choice.points < 0 ? `${choice.points} к убеждению` : '';
+    }
 
-    // Small delay so the "thinking" message is visible
-    setTimeout(() => {
-      const { reply, outcome } = getResponse(text);
-
-      this.setReply(reply);
-      this.setStatus('');
-
-      // Apply outcome
-      if (outcome === 'good') {
-        this.scale = Math.min(12, this.scale + 4);
-      } else if (outcome === 'neutral') {
-        this.scale = Math.min(12, this.scale + 2);
-        this.attemptsLeft += 2;
-      } else {
-        // bad
-        this.attemptsLeft -= 1;
-      }
-
-      this.updateUI();
-
-      // Terminal check after reading the reply
+    if (choice.nextPhase === -1) {
+      // End of dialog — evaluate outcome after reading boss reaction
       setTimeout(() => {
-        if (this.scale >= 12) {
-          this.unmount();
+        this.unmount();
+        if (this.persuasionPoints >= SUCCESS_THRESHOLD) {
           opts.onSuccess();
-        } else if (this.attemptsLeft <= 0) {
-          this.unmount();
-          opts.onFailure();
         } else {
-          // Non-terminal — re-enable input
-          this.pending = false;
-          input.disabled = false;
-          sendBtn.disabled = false;
-          input.value = '';
-          input.focus();
+          opts.onFailure();
         }
-      }, 2000);
-    }, 600);
+      }, 1500);
+    } else {
+      setTimeout(() => this.showPhase(choice.nextPhase, opts), 1500);
+    }
   }
 
-  private setReply(text: string): void {
-    const el = document.getElementById('vk-neg-reply');
-    if (el) el.textContent = `"${text}"`;
-  }
+  private updatePersuasionUI(): void {
+    const fill = document.getElementById('vk-neg-persuasion-fill');
+    if (fill) fill.style.width = `${this.persuasionPoints}%`;
 
-  private setStatus(text: string): void {
-    const el = document.getElementById('vk-neg-status');
-    if (el) el.textContent = text;
+    const label = document.getElementById('vk-neg-persuasion-label');
+    if (label) label.textContent = `Убеждение: ${this.persuasionPoints} / 100`;
   }
 
   private ensureStyle(): void {
@@ -157,22 +128,22 @@ export class NegotiationOverlay {
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      #${OVERLAY_ID}{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);z-index:9999}
-      .vk-neg-panel{max-width:560px;width:min(92vw,560px);background:#0e1520;border:1px solid #2a3f5a;border-radius:12px;padding:28px;display:flex;flex-direction:column;gap:14px}
-      .vk-neg-boss-name{color:#c8a86c;font-size:18px;letter-spacing:.1em;text-transform:uppercase}
-      .vk-neg-reply{margin:0;color:#b0c4d8;font-size:14px;font-style:italic;min-height:60px;line-height:1.6}
-      .vk-neg-scale-wrap{display:flex;flex-direction:column;gap:4px}
-      .vk-neg-scale-track{height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden}
-      .vk-neg-scale-fill{height:100%;background:linear-gradient(90deg,#a87b4c,#f0c17b);border-radius:4px;transition:width .4s ease;width:0%}
-      .vk-neg-scale-label{font-size:11px;color:#7a9ab8;text-align:right;margin-top:2px}
-      .vk-neg-attempts{font-size:12px;color:#c8d8e8;letter-spacing:.06em}
-      .vk-neg-input{width:100%;box-sizing:border-box;background:#0a0f18;border:1px solid #2a3f5a;color:#e8f0f8;padding:10px 14px;border-radius:6px;font-size:14px;outline:none}
-      .vk-neg-input:focus{border-color:#4a7fa8}
-      .vk-neg-input:disabled{opacity:.5}
-      .vk-neg-send{margin-top:2px;background:#1a2f4a;color:#90c8f0;border:1px solid #2a5a7a;padding:10px 24px;border-radius:6px;cursor:pointer;font-size:14px;transition:background .15s}
-      .vk-neg-send:hover:not(:disabled){background:#223a5a}
-      .vk-neg-send:disabled{opacity:.4;cursor:default}
-      .vk-neg-status{font-size:11px;color:#7a9ab8;letter-spacing:.06em;min-height:16px}
+      #${OVERLAY_ID}{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.92);z-index:9999}
+      .vk-neg-wrap{max-width:640px;width:min(94vw,640px);display:flex;flex-direction:column;border:1px solid #4a1a6a;border-radius:12px;overflow:hidden}
+      .vk-neg-boss-panel{background:linear-gradient(180deg,#0e0018 0%,#180828 100%);padding:24px 28px 20px;border-bottom:1px solid #4a1a6a;box-shadow:inset 0 0 40px rgba(120,0,200,.15)}
+      .vk-neg-boss-name{color:#c060ff;font-size:13px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:4px}
+      .vk-neg-phase-label{color:#7040a0;font-size:11px;letter-spacing:.1em;margin-bottom:12px}
+      .vk-neg-boss-text{margin:0;color:#d0b0f0;font-size:14px;font-style:italic;line-height:1.7;white-space:pre-line}
+      .vk-neg-player-panel{background:linear-gradient(180deg,#000d1a 0%,#001428 100%);padding:20px 28px 24px}
+      .vk-neg-persuasion-wrap{margin-bottom:16px}
+      .vk-neg-persuasion-track{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-bottom:4px}
+      .vk-neg-persuasion-fill{height:100%;background:linear-gradient(90deg,#4040c0,#a040ff);border-radius:3px;transition:width .4s ease;width:0%}
+      .vk-neg-persuasion-label{font-size:11px;color:#4080c0;text-align:right}
+      .vk-neg-choices{display:flex;flex-direction:column;gap:8px}
+      .vk-neg-choice{background:#040c18;color:#90c8f0;border:1px solid #1a3a5a;padding:11px 16px;border-radius:6px;cursor:pointer;font-size:13px;text-align:left;transition:background .15s,border-color .15s;line-height:1.4}
+      .vk-neg-choice:hover:not(:disabled){background:#0a1e30;border-color:#2a6090}
+      .vk-neg-choice:disabled{opacity:.4;cursor:default}
+      .vk-neg-status{font-size:12px;color:#8060c0;text-align:center;min-height:18px;margin-top:10px;letter-spacing:.06em}
     `;
     document.head.appendChild(style);
   }

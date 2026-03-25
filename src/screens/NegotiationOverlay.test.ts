@@ -1,31 +1,43 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NegotiationOverlay } from './NegotiationOverlay';
-import { getResponse } from '../game/BossDialog';
+import { getPhase, SUCCESS_THRESHOLD } from '../game/BossDialog';
 
-// Helper: submit a message and advance past the 600ms thinking delay
-function submit(input: HTMLInputElement, sendBtn: HTMLButtonElement, text: string) {
-  input.value = text;
-  sendBtn.click();
-  vi.advanceTimersByTime(600); // thinking delay → reply + UI update
+/** Find a choice button by its exact text label. */
+function btn(text: string): HTMLButtonElement | undefined {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('.vk-neg-choice'))
+    .find(b => b.textContent === text);
 }
 
-describe('BossDialog classification', () => {
-  it('1 word → bad', () => {
-    expect(getResponse('нет').outcome).toBe('bad');
+describe('BossDialog tree', () => {
+  it('Phase 1 has 3 choices', () => {
+    expect(getPhase(1)!.choices).toHaveLength(3);
   });
 
-  it('2-4 words → neutral', () => {
-    expect(getResponse('мир или война').outcome).toBe('neutral');
+  it('Phase 2 (history) is reachable via "Кто ты?" → nextPhase === 2', () => {
+    const p1 = getPhase(1)!;
+    const choice = p1.choices.find(c => c.text.startsWith('Кто ты'));
+    expect(choice?.nextPhase).toBe(2);
   });
 
-  it('5+ words → good', () => {
-    expect(getResponse('мы защищаем данные всего человечества').outcome).toBe('good');
+  it('Phase 3 has 5 choices', () => {
+    expect(getPhase(3)!.choices).toHaveLength(5);
   });
 
-  it('returns a non-empty reply string', () => {
-    const { reply } = getResponse('Аполлон — последняя надежда людей');
-    expect(typeof reply).toBe('string');
-    expect(reply.length).toBeGreaterThan(10);
+  it('Phase 4 final choices all have nextPhase === -1', () => {
+    getPhase(4)!.choices.forEach(c => expect(c.nextPhase).toBe(-1));
+  });
+
+  it('SUCCESS_THRESHOLD is 50', () => {
+    expect(SUCCESS_THRESHOLD).toBe(50);
+  });
+
+  it('best path (1→2→3→4) totals >= 50 points', () => {
+    const best =
+      15 +  // "Кто ты?" Phase 1
+      30 +  // "Охота на невинных" Phase 2
+      35 +  // "Свобода выбора" Phase 3
+      20;   // "Присоединись" Phase 4
+    expect(best).toBeGreaterThanOrEqual(SUCCESS_THRESHOLD);
   });
 });
 
@@ -48,145 +60,125 @@ describe('NegotiationOverlay', () => {
 
   // ─── 1. Mount ─────────────────────────────────────────────────────────────
 
-  it('mount renders scale bar, attempts counter, and boss opening line', () => {
+  it('mount renders overlay with Phase 1 boss text and 3 choice buttons', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
     expect(document.getElementById('vk-neg-overlay')).not.toBeNull();
-    expect(document.getElementById('vk-neg-scale-fill')).not.toBeNull();
 
-    const attemptsEl = document.getElementById('vk-neg-attempts');
-    expect(attemptsEl?.textContent).toContain('3');
+    const textEl = document.getElementById('vk-neg-boss-text');
+    expect(textEl?.textContent).toContain('Код Предков');
 
-    // Opening line is rendered (non-empty boss reply)
-    const replyEl = document.getElementById('vk-neg-reply');
-    expect(replyEl?.textContent?.length).toBeGreaterThan(5);
+    expect(document.querySelectorAll('.vk-neg-choice')).toHaveLength(3);
   });
 
-  // ─── 2. Good outcome (5+ words → scale +4) ───────────────────────────────
+  // ─── 2. "Кто ты?" → Phase 2 ──────────────────────────────────────────────
 
-  it('good outcome: 5+ word reply increases scale by 4', () => {
+  it('"Кто ты?" advances to Phase 2 — shows history text', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
-    const input = document.querySelector<HTMLInputElement>('input')!;
-    const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
+    btn('Кто ты? Почему ты охотишься за Кодом Предков?')?.click();
+    vi.advanceTimersByTime(1500);
 
-    // 5 words → good
-    submit(input, sendBtn, 'мы защищаем данные всего человечества');
-
-    const labelEl = document.getElementById('vk-neg-scale-label');
-    expect(labelEl?.textContent).toContain('4');
-    expect(labelEl?.textContent).toContain('12');
+    const textEl = document.getElementById('vk-neg-boss-text');
+    expect(textEl?.textContent).toContain('Асгард-Прайм');
+    expect(textEl?.textContent).toContain('Пустоту');
   });
 
-  // ─── 3. Neutral outcome (2-4 words → scale +2, attempts +2) ──────────────
+  // ─── 3. "Никогда!" → Phase 3 ─────────────────────────────────────────────
 
-  it('neutral outcome: 2-4 word reply increases scale by 2 and attempts by 2', () => {
+  it('"Никогда!" skips Phase 2, goes directly to Phase 3 debate', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
-    const input = document.querySelector<HTMLInputElement>('input')!;
-    const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
+    btn('Никогда! Цитадель Асгард-Прайм устоит!')?.click();
+    vi.advanceTimersByTime(1500);
 
-    // 3 words → neutral
-    submit(input, sendBtn, 'мир или война');
-
-    const labelEl = document.getElementById('vk-neg-scale-label');
-    expect(labelEl?.textContent).toContain('2');
-
-    // attempts 3+2=5
-    const attemptsEl = document.getElementById('vk-neg-attempts');
-    expect(attemptsEl?.textContent).toContain('5');
+    const textEl = document.getElementById('vk-neg-boss-text');
+    expect(textEl?.textContent).toContain('мольбы');
   });
 
-  // ─── 4. Bad outcome (1 word → attempts -1, scale 0) ──────────────────────
+  // ─── 4. Persuasion bar updates ────────────────────────────────────────────
 
-  it('bad outcome: 1 word reply decreases attempts by 1, scale unchanged', () => {
+  it('persuasion label updates immediately after choice click', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
-    const input = document.querySelector<HTMLInputElement>('input')!;
-    const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
+    btn('Кто ты? Почему ты охотишься за Кодом Предков?')?.click();
 
-    // 1 word → bad
-    submit(input, sendBtn, 'нет');
-
-    const labelEl = document.getElementById('vk-neg-scale-label');
-    expect(labelEl?.textContent).toContain('0');
-    expect(labelEl?.textContent).toContain('12');
-
-    // attempts 3-1=2
-    const attemptsEl = document.getElementById('vk-neg-attempts');
-    expect(attemptsEl?.textContent).toContain('2');
+    const label = document.getElementById('vk-neg-persuasion-label');
+    expect(label?.textContent).toContain('15');
   });
 
-  // ─── 5. Success terminal: scale >= 12 calls onSuccess ────────────────────
+  // ─── 5. Buttons disabled after click ─────────────────────────────────────
 
-  it('success terminal: scale >= 12 calls onSuccess after delay', () => {
-    // Start at 8 so one good reply (5+ words, +4) reaches 12
-    overlay.mount(document.body, { onSuccess, onFailure, initialScale: 8 });
+  it('all choice buttons are disabled immediately after a click', () => {
+    overlay.mount(document.body, { onSuccess, onFailure });
 
-    const input = document.querySelector<HTMLInputElement>('input')!;
-    const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
+    btn('Мы готовы к бою, Ночной Охотник!')?.click();
 
-    submit(input, sendBtn, 'мы защищаем данные всего человечества');
+    document.querySelectorAll<HTMLButtonElement>('.vk-neg-choice').forEach(b => {
+      expect(b.disabled).toBe(true);
+    });
+  });
 
-    // onSuccess not called yet (waiting for 2000ms read delay)
-    expect(onSuccess).not.toHaveBeenCalled();
+  // ─── 6. Success path ──────────────────────────────────────────────────────
 
-    vi.advanceTimersByTime(2000);
+  it('success path: best choices (1→2→3→4) call onSuccess', () => {
+    overlay.mount(document.body, { onSuccess, onFailure });
+
+    // Phase 1 (+15) → Phase 2
+    btn('Кто ты? Почему ты охотишься за Кодом Предков?')?.click();
+    vi.advanceTimersByTime(1500);
+
+    // Phase 2 (+30) → Phase 3
+    btn('Охота на невинных — не честь охотника.')?.click();
+    vi.advanceTimersByTime(1500);
+
+    // Phase 3 (+35) → Phase 4
+    btn('Потому что свобода выбора важнее совершенства.')?.click();
+    vi.advanceTimersByTime(1500);
+
+    // Phase 4 (+20) → end (total = 100)
+    btn('Присоединись к нам. Помоги защитить Цитадель.')?.click();
+    vi.advanceTimersByTime(1500);
+
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onFailure).not.toHaveBeenCalled();
     expect(document.getElementById('vk-neg-overlay')).toBeNull();
   });
 
-  // ─── 6. Failure terminal: attempts = 0 calls onFailure ───────────────────
+  // ─── 7. Failure path ──────────────────────────────────────────────────────
 
-  it('failure terminal: attempts = 0 calls onFailure after delay', () => {
-    // 1 attempt, 1 word → bad → attempts = 0
-    overlay.mount(document.body, {
-      onSuccess,
-      onFailure,
-      initialAttempts: 1,
-      initialScale: 0,
-    });
+  it('failure path: aggressive choices call onFailure', () => {
+    overlay.mount(document.body, { onSuccess, onFailure });
 
-    const input = document.querySelector<HTMLInputElement>('input')!;
-    const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
+    // Phase 1 (clamped to 0) → Phase 3
+    btn('Никогда! Цитадель Асгард-Прайм устоит!')?.click();
+    vi.advanceTimersByTime(1500);
 
-    submit(input, sendBtn, 'нет');
+    // Phase 3 (clamped to 0) → Phase 4
+    btn('Код Предков — не твой. Никогда не был твоим.')?.click();
+    vi.advanceTimersByTime(1500);
 
-    expect(onFailure).not.toHaveBeenCalled();
+    // Phase 4 (+5) → end (total = 5 < 50)
+    btn('Ты должен ответить за свои действия.')?.click();
+    vi.advanceTimersByTime(1500);
 
-    vi.advanceTimersByTime(2000);
     expect(onFailure).toHaveBeenCalledTimes(1);
     expect(onSuccess).not.toHaveBeenCalled();
-    expect(document.getElementById('vk-neg-overlay')).toBeNull();
   });
 
-  // ─── 7. Pending guard ─────────────────────────────────────────────────────
+  // ─── 8. Duplicate mount prevention ───────────────────────────────────────
 
-  it('pending guard: double-click processes only once', () => {
-    overlay.mount(document.body, { onSuccess, onFailure, initialScale: 8 });
+  it('second mount is ignored when overlay already exists', () => {
+    overlay.mount(document.body, { onSuccess, onFailure });
+    overlay.mount(document.body, { onSuccess, onFailure });
 
-    const input = document.querySelector<HTMLInputElement>('input')!;
-    const sendBtn = document.querySelector<HTMLButtonElement>('button')!;
-    input.value = 'мы защищаем данные всего человечества';
-
-    // Two clicks before thinking delay expires
-    sendBtn.click();
-    sendBtn.click();
-
-    vi.advanceTimersByTime(600);
-
-    // Scale should be 8+4=12, not 8+8=16
-    const labelEl = document.getElementById('vk-neg-scale-label');
-    expect(labelEl?.textContent).toBe('12 / 12');
+    expect(document.querySelectorAll('#vk-neg-overlay')).toHaveLength(1);
   });
 
-  // ─── 8. Unmount ───────────────────────────────────────────────────────────
+  // ─── 9. Unmount ───────────────────────────────────────────────────────────
 
   it('unmount removes overlay from DOM', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
-    expect(document.getElementById('vk-neg-overlay')).not.toBeNull();
-
     overlay.unmount();
     expect(document.getElementById('vk-neg-overlay')).toBeNull();
   });

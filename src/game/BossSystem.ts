@@ -39,8 +39,15 @@ export class BossSystem {
     // Only trigger once per session
     if (state.bossNegotiation?.triggered) return;
 
+    // Debug: log elapsed every ~2s
+    if (Math.floor(state.elapsed * 0.5) > Math.floor(((state.elapsed - dt) * 0.5))) {
+      console.log('[BossSystem] elapsed:', state.elapsed.toFixed(1), '/ trigger at:', BOSS_TRIGGER_SECONDS);
+    }
+
     // Not time yet
     if (state.elapsed < BOSS_TRIGGER_SECONDS) return;
+
+    console.log('[BossSystem] TRIGGERED — spawning boss, mounting overlay');
 
     // Spawn boss unit from UNIT_DEFS (spread — never mutate the constant)
     const bossDef = { ...UNIT_DEFS['boss-enemy'] };
@@ -73,8 +80,6 @@ export class BossSystem {
       this.overlay.mount(container, {
         onSuccess: () => this.handleSuccess(state),
         onFailure: () => this.handleFailure(state),
-        initialScale: state.bossNegotiation.scale,
-        initialAttempts: state.bossNegotiation.attemptsLeft,
       });
     }
   }
