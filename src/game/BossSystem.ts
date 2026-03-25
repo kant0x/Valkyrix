@@ -2,7 +2,7 @@ import type { GameState, Unit } from './game.types';
 import { UNIT_DEFS } from './game.types';
 import { NegotiationOverlay } from '../screens/NegotiationOverlay';
 
-const BOSS_TRIGGER_SECONDS = 300;
+const BOSS_TRIGGER_SECONDS = 10;
 export const NEGOTIATION_RESOURCE_REWARD = 120;
 export const NEGOTIATION_HP_REWARD = 400;
 export const NEGOTIATION_WAVE_TIMER_FLOOR = 20;
