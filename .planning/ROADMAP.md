@@ -110,7 +110,13 @@ Plans:
   2. Каждый убитый юнит записывается как on-chain транзакция через MagicBlock.
   3. Лидерборд читается из блокчейна и отображается в игре.
   4. Сеть стабильно работает под нагрузкой нескольких одновременных сессий.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Install blockchain deps + type contracts (KillPayload, LeaderboardEntry) + test scaffolds (wave 1)
+- [ ] 05-02-PLAN.md — BlockchainService.recordKill() + CombatSystem kill hook (wave 2)
+- [ ] 05-03-PLAN.md — LeaderboardService (SOAR SDK) + LeaderboardOverlay DOM screen (wave 2, parallel)
+- [ ] 05-04-PLAN.md — SessionLayer real devnet connection + SOAR init script + human verification (wave 3)
 
 ## Progress
 
@@ -122,4 +128,4 @@ Plans:
 | 02.2. In-game menu and overlay UX | 3/3 | Complete | 2026-03-21 |
 | 3. Units, Buildings & Combat | 6/6 implemented | In Progress | - |
 | 4. Boss — Negotiation Mechanic | 3/4 | In Progress|  |
-| 5. Multiplayer & Blockchain Leaderboard | 0/TBD | Not started | - |
+| 5. Multiplayer & Blockchain Leaderboard | 0/4 | Not started | - |
