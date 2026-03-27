@@ -61,17 +61,17 @@
 
 ### Phase 4 — Boss Negotiation
 
-- [ ] **BOSS-01**: Босс появляется на карте по триггеру (событие волны или условие)
-- [ ] **BOSS-02**: Игроку показывается диалог-переговоры с вариантами ответа
-- [ ] **BOSS-03**: Успешные переговоры: босс уходит, игрок получает баффы
-- [ ] **BOSS-04**: Провал переговоров: босс злой, призывает орду, боёвка усиливается
+- [x] **BOSS-01**: Босс появляется на карте по триггеру (событие волны или условие)
+- [x] **BOSS-02**: Игроку показывается диалог-переговоры с вариантами ответа
+- [x] **BOSS-03**: Успешные переговоры: босс уходит, игрок получает баффы
+- [x] **BOSS-04**: Провал переговоров: босс злой, призывает орду, боёвка усиливается
 
 ### Phase 5 — Multiplayer & Blockchain
 
-- [ ] **NET-04**: Несколько игроков играют в одной сессии в реальном времени
-- [ ] **CHAIN-01**: Каждый убитый юнит записывается как on-chain транзакция через MagicBlock
-- [ ] **CHAIN-02**: Лидерборд хранится на блокчейне
-- [ ] **CHAIN-03**: Лидерборд читается из блокчейна и отображается в игре
+- [x] **NET-04**: Несколько игроков играют в одной сессии в реальном времени
+- [x] **CHAIN-01**: Каждый убитый юнит записывается как on-chain транзакция через MagicBlock
+- [x] **CHAIN-02**: Лидерборд хранится на блокчейне
+- [x] **CHAIN-03**: Лидерборд читается из блокчейна и отображается в игре
 
 ## Out of Scope
 
@@ -117,14 +117,14 @@
 | BLDG-02 | Phase 3 | Complete |
 | GAME-01 | Phase 3 | Complete |
 | GAME-02 | Phase 3 | Complete |
-| BOSS-01 | Phase 4 | Pending |
-| BOSS-02 | Phase 4 | Pending |
-| BOSS-03 | Phase 4 | Pending |
-| BOSS-04 | Phase 4 | Pending |
-| NET-04 | Phase 5 | Pending |
-| CHAIN-01 | Phase 5 | Pending |
-| CHAIN-02 | Phase 5 | Pending |
-| CHAIN-03 | Phase 5 | Pending |
+| BOSS-01 | Phase 4 | Complete |
+| BOSS-02 | Phase 4 | Complete |
+| BOSS-03 | Phase 4 | Complete |
+| BOSS-04 | Phase 4 | Complete |
+| NET-04 | Phase 5 | Complete |
+| CHAIN-01 | Phase 5 | Complete |
+| CHAIN-02 | Phase 5 | Complete |
+| CHAIN-03 | Phase 5 | Complete |
 
 **Coverage:**
 - Phase 1 complete: 18 requirements

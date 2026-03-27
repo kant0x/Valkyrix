@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 05
-current_plan: phase 04 complete — advancing to phase 05
-status: ready
-last_updated: "2026-03-26T00:00:00.000Z"
+current_plan: 05-05 paused at Task 3 human-verify checkpoint — devnet TX verification pending
+status: checkpoint
+last_updated: "2026-03-27T11:52:00.000Z"
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 19
-  completed_plans: 19
+  completed_phases: 5
+  total_plans: 24
+  completed_plans: 24
 ---
 
 # Session State
@@ -22,9 +22,9 @@ See: .planning/PROJECT.md
 ## Position
 
 **Milestone:** v1.0 milestone
-**Current phase:** 04
-**Current plan:** 04-03 complete — NegotiationOverlay 3-outcome rewrite (phase 04 complete)
-**Status:** In Progress
+**Current phase:** 05
+**Current plan:** 05-05 paused at Task 3 human-verify checkpoint — devnet TX verification pending
+**Status:** Checkpoint (awaiting human devnet verification)
 
 ## Session Log
 
@@ -50,6 +50,7 @@ See: .planning/PROJECT.md
 - 2026-03-24: Phase 04 plan 04-02 re-executed — full timer-trigger rewrite; elapsed accumulation at 300s, horde heavy x8 + ranged x6 (no light), 39 tests GREEN
 - 2026-03-24: Phase 04 plan 04-03 re-executed — NegotiationOverlay full rewrite; scale bar + attempts counter + 3-outcome Gemini integration; 8 tests GREEN
 - 2026-03-26: Phase 04 UAT complete — 7/7 passed; boss dialog, choice buttons, text input, outcome screens, horde spawn all verified in browser
+- 2026-03-27: Phase 05 plan 05-05 Tasks 1-2 complete — SessionLayer isConnected, session lifecycle wired, deploy scripts; paused at Task 3 human-verify checkpoint
 
 ## Accumulated Context
 
@@ -71,3 +72,6 @@ See: .planning/PROJECT.md
 - Phase 04-01 (re-exec): elapsed? optional on GameState for compat; boss-enemy hp 260->500 per CONTEXT.md; scale/attemptsLeft? optional on BossNegotiationState
 - Phase 04-03 (re-exec): flushPromises() (3x Promise.resolve) needed to drain nested json() microtask chain in jsdom tests
 - Phase 04-03 (re-exec): 3-outcome system replaces binary success/failure — good(+4 scale), neutral(+2 scale, +2 attempts), bad(-1 attempts)
+- Phase 05-05: ChainUnavailableError at game start is non-blocking; game runs in offline mode to preserve playability
+- Phase 05-05: initSession/endSession use memo-TX fire-and-forget; real Anchor CPI requires deployed program (user-setup)
+- Phase 05-05: beginSessionScoreSubmit is async: awaits endSession() then falls back to local snapshot on error
