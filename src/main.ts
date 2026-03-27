@@ -17,7 +17,7 @@ import type { GameViewportLayoutRefs } from './screens/GameViewportLayout';
 import { ValkyrixWalletSplashScreen } from './screens/ValkyrixWalletSplashScreen';
 import { ValkyrixMainMenuScreen } from './screens/ValkyrixMainMenuScreen';
 import { HudOverlay } from './screens/HudOverlay';
-import { tryAutoConnect } from './wallet/WalletService';
+import { getCurrentState, tryAutoConnect } from './wallet/WalletService';
 import { createGameState } from './game/GameState';
 import { WaveController } from './game/WaveController';
 import { UnitSystem } from './game/UnitSystemRuntime';
@@ -31,6 +31,9 @@ import { drawCitadelAura, drawCitadelEnergyFlow, drawCitadelOrbitingSwarm } from
 import { UNIT_DEFS } from './game/game.types';
 import type { GameState } from './game/game.types';
 import { BossSystem } from './game/BossSystem';
+import { BlockchainService } from './blockchain/BlockchainService';
+import { LeaderboardService } from './blockchain/LeaderboardService';
+import { SessionLayer, ChainUnavailableError } from './session/SessionLayer';
 
 type LayerName = 'ground' | 'paths' | 'cam' | 'zones' | 'decor' | 'citadel' | 'spawn';
 
@@ -208,6 +211,94 @@ let pointerMoveHandler: ((event: PointerEvent) => void) | null = null;
 let pointerUpHandler: ((event: PointerEvent) => void) | null = null;
 let pointerCancelHandler: ((event: PointerEvent) => void) | null = null;
 let pointerLeaveHandler: (() => void) | null = null;
+const blockchainService = new BlockchainService();
+const sessionLayer = new SessionLayer();
+let sessionScoreSubmitStarted = false;
+
+function showScoreError(message: string): void {
+    document.getElementById('vk-score-toast')?.remove();
+    const toast = document.createElement('div');
+    toast.id = 'vk-score-toast';
+    toast.style.cssText = [
+        'position:fixed',
+        'bottom:24px',
+        'left:50%',
+        'transform:translateX(-50%)',
+        'z-index:450',
+        'max-width:420px',
+        'padding:12px 18px',
+        'border-radius:10px',
+        'background:rgba(145,20,20,.94)',
+        'border:1px solid rgba(255,120,120,.45)',
+        'box-shadow:0 12px 40px rgba(0,0,0,.45)',
+        'color:#fff',
+        'font:600 14px Inter, sans-serif',
+        'text-align:center',
+        'cursor:pointer',
+    ].join(';');
+    toast.textContent = message;
+    toast.addEventListener('click', () => toast.remove());
+    document.body.appendChild(toast);
+    setTimeout(() => {
+        if (toast.isConnected) toast.remove();
+    }, 5000);
+}
+
+async function submitScoreWithRetry(
+    walletPubkey: string,
+    score: number,
+    kills: number,
+    maxRetries = 3,
+): Promise<void> {
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+        try {
+            await new LeaderboardService().submitScore(walletPubkey, score, kills);
+            return;
+        } catch (error) {
+            lastError = error;
+            const msg = error instanceof Error ? error.message.toLowerCase() : '';
+            if (
+                msg.includes('insufficient') ||
+                msg.includes('lamports') ||
+                msg.includes('0x1')
+            ) {
+                showScoreError('пополните баланс');
+                return;
+            }
+
+            if (attempt < maxRetries) {
+                await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+            }
+        }
+    }
+
+    console.warn('[Phase5] score submit failed after retries:', lastError);
+    showScoreError('Результат не сохранён в лидерборде (ошибка сети)');
+}
+
+function beginSessionScoreSubmit(fallbackKills: number): void {
+    if (sessionScoreSubmitStarted) return;
+    sessionScoreSubmitStarted = true;
+
+    const { publicKey } = getCurrentState();
+    if (!publicKey) return;
+
+    void (async () => {
+        let score: number;
+        let kills: number;
+        try {
+            const onChain = await blockchainService.endSession();
+            score = onChain.score;
+            kills = Math.max(fallbackKills, onChain.kills);
+        } catch {
+            const snapshot = blockchainService.getSessionSnapshot();
+            kills = Math.max(fallbackKills, snapshot.kills);
+            score = kills * 10 + snapshot.creates + (snapshot.bossNegotiated ? 10000 : 0);
+        }
+        void submitScoreWithRetry(publicKey, score, kills);
+    })();
+}
 
 function syncCanvasCursor(): void {
     if (!canvas) return;
@@ -512,7 +603,7 @@ function configureGameHud(hud: HudOverlay): void {
                 hud.setCommandMessage('Battle state is still loading.');
                 return;
             }
-            const result = recruitUnit('light-ally', gameState);
+            const result = recruitUnit('light-ally', gameState, blockchainService);
             hud.setCommandMessage(result.message);
         },
         stagedUnitB: () => {
@@ -520,7 +611,7 @@ function configureGameHud(hud: HudOverlay): void {
                 hud.setCommandMessage('Battle state is still loading.');
                 return;
             }
-            const result = recruitUnit('collector', gameState);
+            const result = recruitUnit('collector', gameState, blockchainService);
             hud.setCommandMessage(result.message);
         },
     });
@@ -808,6 +899,19 @@ async function loadMap(showReloadStatus = false): Promise<void> {
     runtime.error = null;
     runtime.status = showReloadStatus ? 'Reloading active map...' : 'Loading active map...';
     sidePanel.resetState();
+
+    // Phase 5: Connect to MagicBlock devnet (5s timeout guard)
+    if (!sessionLayer.isConnected) {
+        try {
+            await sessionLayer.connect();
+        } catch (err) {
+            if (err instanceof ChainUnavailableError) {
+                // Non-blocking: log and continue without blockchain — game still works offline
+                console.warn('[Phase5] MagicBlock devnet unavailable — game will run without on-chain events');
+            }
+        }
+    }
+
     try {
         const mapUrl = new URL(`assets/maps/active-map.json?v=${Date.now()}`, window.location.href);
         const response = await fetch(mapUrl.toString(), { cache: 'no-store' });
@@ -834,11 +938,24 @@ async function loadMap(showReloadStatus = false): Promise<void> {
         buildingSystem = new BuildingSystem();
         projectileSystem = new ProjectileSystem();
         combatSystem = new CombatSystem();
+        buildingSystem.setBlockchainService(blockchainService);
+        combatSystem.setBlockchainService(blockchainService);
+        bossSystem.setBlockchainService(blockchainService);
         resourceSystem = new ResourceSystem();
         const arrowImg = new Image();
         arrowImg.src = '/assets/projectiles/Arrow01.png';
         gameRenderer = new GameRenderer(arrowImg);
         winLossShown = false;
+        sessionScoreSubmitStarted = false;
+        blockchainService.resetSessionStats();
+
+        // Phase 5: init session on-chain after systems are ready
+        const { publicKey } = getCurrentState();
+        if (publicKey) {
+            void blockchainService.initSession(publicKey).catch((err) => {
+                console.warn('[Phase5] initSession failed (non-blocking):', err);
+            });
+        }
     } catch (error) {
         runtime.map = null;
         runtime.error = error instanceof Error ? error.message : String(error);
@@ -947,10 +1064,12 @@ function update(dt: number): void {
         if (!winLossShown && gameState.phase === 'won') {
             gameScreenHudRef?.showWinLossOverlay('won');
             winLossShown = true;
+            beginSessionScoreSubmit(enemyKilledTotal);
         }
         if (!winLossShown && gameState.phase === 'lost') {
             gameScreenHudRef?.showWinLossOverlay('lost');
             winLossShown = true;
+            beginSessionScoreSubmit(enemyKilledTotal);
         }
     }
 }
