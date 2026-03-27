@@ -1,0 +1,16 @@
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+valkyrix_ledger = "Fg6PaFpoGXkYsidMpWxTWqk6W2BeZ7FEfcYkg476zPFs"
+
+[programs.devnet]
+valkyrix_ledger = "Fg6PaFpoGXkYsidMpWxTWqk6W2BeZ7FEfcYkg476zPFs"
+
+[provider]
+cluster = "Devnet"
+wallet = "C:/Users/Kant/.config/solana/deploy-keypair.json"
+
+[scripts]
+test = "cargo test --manifest-path ./Cargo.toml -- --nocapture"

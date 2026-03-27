@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
 set -e
 
+# Load .env.local if exists
+ENV_FILE="$(dirname "$0")/../.env.local"
+if [ -f "$ENV_FILE" ]; then
+  export $(grep -v '^#' "$ENV_FILE" | grep -E '^(ANCHOR_WALLET|SOLANA_CLUSTER)=' | xargs)
+fi
+
+KEYPAIR="${ANCHOR_WALLET:-$HOME/.config/solana/deploy-keypair.json}"
+CLUSTER="${SOLANA_CLUSTER:-devnet}"
+
 echo "=== Building valkyrix-recorder Anchor program ==="
+echo "Deployer: $(solana-keygen pubkey "$KEYPAIR" 2>/dev/null || echo "$KEYPAIR")"
+echo "Cluster:  $CLUSTER"
+echo ""
+
 cd "$(dirname "$0")/../anchor"
 anchor build
 
-echo "=== Deploying to Solana devnet ==="
-anchor deploy --provider.cluster devnet
+echo ""
+echo "=== Deploying to Solana $CLUSTER ==="
+anchor deploy \
+  --provider.cluster "$CLUSTER" \
+  --provider.wallet "$KEYPAIR"
 
 echo ""
 echo "=== Deploy complete ==="
