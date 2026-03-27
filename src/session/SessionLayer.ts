@@ -1,4 +1,6 @@
 // src/session/SessionLayer.ts
+import { ConnectionMagicRouter } from '@magicblock-labs/ephemeral-rollups-sdk';
+import { MAGIC_ROUTER_DEVNET, MAGIC_ROUTER_WS_DEVNET } from '../blockchain/blockchain.types';
 
 /**
  * SessionLayer — MagicBlock / Solana devnet connection layer.
@@ -33,10 +35,33 @@ export const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com';
 
 // Use a type-only alias to avoid importing @solana/web3.js at module load time
 // (bundle size: ~400 KB gzipped — only load when player presses Play)
-type Connection = import('@solana/web3.js').Connection;
+const CHAIN_TIMEOUT_MS = 5000;
+
+type SessionConnection = Pick<ConnectionMagicRouter, 'getSlot'>;
+
+export class ChainUnavailableError extends Error {
+  constructor() {
+    super('Помехи в сети. Соединение с блокчейном недоступно. Попробуйте позже.');
+    this.name = 'ChainUnavailableError';
+  }
+}
+
+async function createDefaultConnection(): Promise<SessionConnection> {
+  return new ConnectionMagicRouter(MAGIC_ROUTER_DEVNET, {
+    wsEndpoint: MAGIC_ROUTER_WS_DEVNET,
+  });
+}
 
 export class SessionLayer {
-  private connection: Connection | null = null;
+  private connection: SessionConnection | null = null;
+
+  constructor(
+    private readonly createConnection: () => Promise<SessionConnection> = createDefaultConnection,
+  ) {}
+
+  get isConnected(): boolean {
+    return this.connection !== null;
+  }
 
   /**
    * Establish connection to MagicBlock devnet.
@@ -44,17 +69,25 @@ export class SessionLayer {
    * May take 3–10 seconds on first call (devnet cold start — caller should show loading state).
    */
   async connect(): Promise<void> {
-    const { Connection } = await import('@solana/web3.js');
-    this.connection = new Connection(MAGICBLOCK_DEVNET_RPC, 'confirmed');
-    // Verify connectivity — throws if devnet is unreachable
-    await this.connection.getSlot();
+    this.connection = await this.createConnection();
+    try {
+      await Promise.race([
+        this.connection.getSlot(),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new ChainUnavailableError()), CHAIN_TIMEOUT_MS);
+        }),
+      ]);
+    } catch {
+      this.connection = null;
+      throw new ChainUnavailableError();
+    }
   }
 
   /**
    * Returns the active Connection instance.
    * @throws if connect() has not been called successfully.
    */
-  getConnection(): Connection {
+  getConnection(): SessionConnection {
     if (!this.connection) {
       throw new Error('SessionLayer not connected — call connect() first');
     }
