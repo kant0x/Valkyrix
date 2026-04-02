@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import {
     centerToScroll,
     clampCenterToScrollBounds,
@@ -26,16 +27,23 @@ import { ProjectileSystem } from './game/ProjectileSystem';
 import { CombatSystem } from './game/CombatSystem';
 import { GameRenderer } from './game/GameRenderer';
 import { ResourceSystem } from './game/ResourceSystem';
-import { canRecruitUnit, recruitUnit } from './game/RecruitmentSystem';
+import { canRecruitUnit, getCyberneticCooldownRemaining, getCyberneticSlotsRemaining, recruitUnit } from './game/RecruitmentSystem';
+import { activateSupport, canActivateSupport, getSupportCooldownRemaining, getSupportPreviewRadius, updateSupport } from './game/SupportSystem';
 import { drawCitadelAura, drawCitadelEnergyFlow, drawCitadelOrbitingSwarm } from './rendering/BuildingEffects';
 import { UNIT_DEFS } from './game/game.types';
-import type { GameState } from './game/game.types';
+import type { GameState, SupportAbilityKey } from './game/game.types';
 import { BossSystem } from './game/BossSystem';
-import { BlockchainService } from './blockchain/BlockchainService';
-import { LeaderboardService } from './blockchain/LeaderboardService';
-import { SessionLayer, ChainUnavailableError } from './session/SessionLayer';
+import { clearBattleSessionMode, isBattleSessionEnabled } from './blockchain/BattleSessionState';
+import { emitBlockchainStatus } from './blockchain/blockchainEvents';
+import type { BlockchainService } from './blockchain/BlockchainService';
+import type { SessionLayer } from './session/SessionLayer';
+import { t } from './i18n/localization';
 
 type LayerName = 'ground' | 'paths' | 'cam' | 'zones' | 'decor' | 'citadel' | 'spawn';
+
+if (typeof globalThis.Buffer === 'undefined') {
+    globalThis.Buffer = Buffer;
+}
 
 type MapCamera = {
     zoom?: number;
@@ -176,7 +184,7 @@ let runtime: RuntimeState = {
     mapName: 'active-map.json',
     cameraCenter: { x: 0, y: 0 },
     zoom: 1,
-    status: 'Loading map...',
+    status: t('game.loadingMap'),
     error: null,
     showDebugMasks: false,
     lastFrameMs: performance.now(),
@@ -201,6 +209,7 @@ let gameRenderer: GameRenderer | null = null;
 const bossSystem = new BossSystem();
 let winLossShown = false;
 let selectedTowerType: 'attack' | 'buff' | 'sell' | null = null;
+let selectedSupportTargeting: Exclude<SupportAbilityKey, 'overdrive'> | null = null;
 // HUD reference for Phase 3 live data updates (set by GameScreen.mount, cleared on unmount)
 let gameScreenHudRef: HudOverlay | null = null;
 let inputBound = false;
@@ -211,9 +220,84 @@ let pointerMoveHandler: ((event: PointerEvent) => void) | null = null;
 let pointerUpHandler: ((event: PointerEvent) => void) | null = null;
 let pointerCancelHandler: ((event: PointerEvent) => void) | null = null;
 let pointerLeaveHandler: (() => void) | null = null;
-const blockchainService = new BlockchainService();
-const sessionLayer = new SessionLayer();
+type BlockchainServiceLike = Pick<
+    BlockchainService,
+    'recordKill' | 'recordCreate' | 'recordBossOutcome' | 'getSessionSnapshot' | 'resetSessionStats' | 'initSession' | 'endSession'
+>;
+
+type SessionLayerLike = Pick<SessionLayer, 'connect' | 'disconnect' | 'getConnection' | 'sendKill' | 'isConnected'>;
+
+function createNoopBlockchainService(): BlockchainServiceLike {
+    return {
+        async recordKill(): Promise<void> {},
+        async recordCreate(): Promise<void> {},
+        async recordBossOutcome(): Promise<void> {},
+        getSessionSnapshot() {
+            return { kills: 0, creates: 0, bossNegotiated: false, score: 0 };
+        },
+        resetSessionStats(): void {},
+        async initSession(): Promise<void> {},
+        async endSession() {
+            return { score: 0, kills: 0 };
+        },
+    };
+}
+
+function createNoopSessionLayer(): SessionLayerLike {
+  return {
+    async connect(): Promise<void> {},
+    disconnect(): void {},
+    getConnection() {
+      throw new Error('SessionLayer unavailable');
+    },
+        async sendKill(): Promise<string> {
+            throw new Error('SessionLayer unavailable');
+        },
+        get isConnected() {
+            return false;
+        },
+    };
+}
+
+let blockchainService: BlockchainServiceLike = createNoopBlockchainService();
+let blockchainServiceLoadPromise: Promise<BlockchainServiceLike> | null = null;
+let sessionLayer: SessionLayerLike = createNoopSessionLayer();
+let sessionLayerLoadPromise: Promise<SessionLayerLike> | null = null;
 let sessionScoreSubmitStarted = false;
+
+function isChainUnavailableError(error: unknown): boolean {
+    return error instanceof Error && error.name === 'ChainUnavailableError';
+}
+
+async function ensureBlockchainService(): Promise<BlockchainServiceLike> {
+    if (blockchainServiceLoadPromise) return blockchainServiceLoadPromise;
+    blockchainServiceLoadPromise = import('./blockchain/BlockchainService')
+        .then(({ BlockchainService }) => {
+            blockchainService = new BlockchainService();
+            return blockchainService;
+        })
+        .catch((error) => {
+            console.warn('[Phase5] BlockchainService unavailable at runtime:', error);
+            blockchainService = createNoopBlockchainService();
+            return blockchainService;
+        });
+    return blockchainServiceLoadPromise;
+}
+
+async function ensureSessionLayer(): Promise<SessionLayerLike> {
+    if (sessionLayerLoadPromise) return sessionLayerLoadPromise;
+    sessionLayerLoadPromise = import('./session/SessionLayer')
+        .then(({ SessionLayer }) => {
+            sessionLayer = new SessionLayer();
+            return sessionLayer;
+        })
+        .catch((error) => {
+            console.warn('[Phase5] SessionLayer unavailable at runtime:', error);
+            sessionLayer = createNoopSessionLayer();
+            return sessionLayer;
+        });
+    return sessionLayerLoadPromise;
+}
 
 function showScoreError(message: string): void {
     document.getElementById('vk-score-toast')?.remove();
@@ -252,7 +336,8 @@ async function submitScoreWithRetry(
 ): Promise<void> {
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
-        try {
+            try {
+            const { LeaderboardService } = await import('./blockchain/LeaderboardService');
             await new LeaderboardService().submitScore(walletPubkey, score, kills);
             return;
         } catch (error) {
@@ -280,9 +365,13 @@ async function submitScoreWithRetry(
 function beginSessionScoreSubmit(fallbackKills: number): void {
     if (sessionScoreSubmitStarted) return;
     sessionScoreSubmitStarted = true;
+    if (!isBattleSessionEnabled()) return;
 
     const { publicKey } = getCurrentState();
-    if (!publicKey) return;
+    if (!publicKey) {
+        clearBattleSessionMode();
+        return;
+    }
 
     void (async () => {
         let score: number;
@@ -294,19 +383,26 @@ function beginSessionScoreSubmit(fallbackKills: number): void {
         } catch {
             const snapshot = blockchainService.getSessionSnapshot();
             kills = Math.max(fallbackKills, snapshot.kills);
-            score = kills * 10 + snapshot.creates + (snapshot.bossNegotiated ? 10000 : 0);
+            score = kills * 10 + snapshot.creates + (snapshot.bossNegotiated ? 1000 : 0);
         }
+        clearBattleSessionMode();
+        sessionLayer.disconnect();
+        emitBlockchainStatus({
+            mode: 'offline',
+            status: 'ended',
+            message: 'Battle session closed. Final score is being submitted.',
+        });
         void submitScoreWithRetry(publicKey, score, kills);
     })();
 }
 
 function syncCanvasCursor(): void {
     if (!canvas) return;
-    canvas.style.cursor = selectedTowerType ? 'crosshair' : runtime.dragging ? 'grabbing' : 'grab';
+    canvas.style.cursor = (selectedTowerType || selectedSupportTargeting) ? 'crosshair' : runtime.dragging ? 'grabbing' : 'grab';
 }
 
 function updateBuildHoverTile(clientX: number, clientY: number): void {
-    if (!selectedTowerType || selectedTowerType === 'sell' || !runtime.map) {
+    if ((!selectedTowerType || selectedTowerType === 'sell') && !selectedSupportTargeting || !runtime.map) {
         runtime.hoverBuildTile = null;
         return;
     }
@@ -375,7 +471,7 @@ function updateBuildHoverTile(clientX: number, clientY: number): void {
             mapName: 'active-map.json',
             cameraCenter: { x: 0, y: 0 },
             zoom: 1,
-            status: 'Loading map...',
+            status: t('game.loadingMap'),
             error: null,
             showDebugMasks: false,
             lastFrameMs: performance.now(),
@@ -445,7 +541,7 @@ function updateBuildHoverTile(clientX: number, clientY: number): void {
             const zoneLayer = map.layers?.zones ?? [];
             const hoveredTile = runtime.hoverBuildTile;
             if (!hoveredTile) {
-                this.hud?.setCommandMessage('Наведи курсор на подсвеченный тайл и ставь башню только в него.');
+                this.hud?.setCommandMessage(t('game.highlightTileRuHint'));
                 return;
             }
             const { col, row } = hoveredTile;
@@ -462,13 +558,13 @@ function updateBuildHoverTile(clientX: number, clientY: number): void {
                 ? `${placedType === 'attack' ? 'Attack' : 'Buff'} tower placed at ${col},${row}.`
                 : `Cannot place ${placedType} tower at ${col},${row}.`;
             if (placed) {
-                this.hud?.setCommandMessage(placedType === 'attack' ? 'Attack Tower placed. Choose another tower or keep defending.' : 'Support Tower placed. Choose another tower or keep defending.');
+                this.hud?.setCommandMessage(placedType === 'attack' ? t('game.towerPlacedAttack') : t('game.towerPlacedBuff'));
                 selectedTowerType = null;
                 runtime.hoverBuildTile = null;
                 syncCanvasCursor();
                 this.hud?.setBuildSelection(null);
             } else {
-                this.hud?.setCommandMessage('Cannot build here. Click a valid highlighted tile and make sure you have enough energy.');
+                this.hud?.setCommandMessage(t('game.buildInvalid'));
             }
         };
         canvas.addEventListener('click', towerClickHandler);
@@ -523,7 +619,7 @@ function resetRuntimeState(): void {
         mapName: 'active-map.json',
         cameraCenter: { x: 0, y: 0 },
         zoom: 1,
-        status: 'Loading map...',
+        status: t('game.loadingMap'),
         error: null,
         showDebugMasks: false,
         lastFrameMs: performance.now(),
@@ -563,67 +659,141 @@ function ensureAnimationLoop(): void {
 
 function configureGameHud(hud: HudOverlay): void {
     selectedTowerType = null;
+    selectedSupportTargeting = null;
     hud.setBuildSelection(selectedTowerType);
     hud.setCommandCallbacks({
         attack: () => {
+            selectedSupportTargeting = null;
             selectedTowerType = selectedTowerType === 'attack' ? null : 'attack';
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
             hud.setBuildSelection(selectedTowerType);
             hud.setCommandMessage(
                 selectedTowerType === 'attack'
-                    ? 'Attack Tower selected. Now click a highlighted build tile on the map.'
-                    : 'Attack Tower deselected.',
+                    ? t('game.attackSelected')
+                    : t('game.attackDeselected'),
             );
         },
         buff: () => {
+            selectedSupportTargeting = null;
             selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
             hud.setBuildSelection(selectedTowerType);
             hud.setCommandMessage(
                 selectedTowerType === 'buff'
-                    ? 'Buff Tower selected. Now click a highlighted build tile on the map.'
-                    : 'Buff Tower deselected.',
+                    ? t('game.buffSelected')
+                    : t('game.buffDeselected'),
             );
         },
         sell: () => {
+            selectedSupportTargeting = null;
             selectedTowerType = selectedTowerType === 'sell' ? null : 'sell';
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
             hud.setBuildSelection(selectedTowerType);
             hud.setCommandMessage(
                 selectedTowerType === 'sell'
-                    ? 'Salvage mode selected. Click a deployed tower to dismantle it and recover energy.'
-                    : 'Salvage mode deselected.',
+                    ? t('game.salvageSelected')
+                    : t('game.salvageDeselected'),
             );
         },
         stagedUnitA: () => {
             if (!gameState) {
-                hud.setCommandMessage('Battle state is still loading.');
+                hud.setCommandMessage(t('game.battleLoading'));
                 return;
             }
-            const result = recruitUnit('light-ally', gameState, blockchainService);
+            const result = recruitUnit('light-ally', gameState, blockchainService as unknown as BlockchainService);
             hud.setCommandMessage(result.message);
         },
         stagedUnitB: () => {
             if (!gameState) {
-                hud.setCommandMessage('Battle state is still loading.');
+                hud.setCommandMessage(t('game.battleLoading'));
                 return;
             }
-            const result = recruitUnit('collector', gameState, blockchainService);
+            const result = recruitUnit('collector', gameState, blockchainService as unknown as BlockchainService);
             hud.setCommandMessage(result.message);
+        },
+        stagedUnitC: () => {
+            if (!gameState) {
+                hud.setCommandMessage(t('game.battleLoading'));
+                return;
+            }
+            const result = recruitUnit('cybernetic', gameState, blockchainService as unknown as BlockchainService);
+            hud.setCommandMessage(result.message);
+        },
+        supportA: () => {
+            if (!gameState) {
+                hud.setCommandMessage(t('game.battleLoading'));
+                return;
+            }
+            selectedSupportTargeting = null;
+            const result = activateSupport('overdrive', gameState, blockchainService as unknown as BlockchainService);
+            hud.setCommandMessage(result.message);
+        },
+        supportB: () => {
+            if (!gameState) {
+                hud.setCommandMessage(t('game.battleLoading'));
+                return;
+            }
+            selectedTowerType = null;
+            selectedSupportTargeting = selectedSupportTargeting === 'orbital-drop' ? null : 'orbital-drop';
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(null);
+            hud.setCommandMessage(selectedSupportTargeting ? 'Выбери зону орбитального удара на карте.' : 'Наведение орбитального удара отменено.');
+        },
+        supportC: () => {
+            if (!gameState) {
+                hud.setCommandMessage(t('game.battleLoading'));
+                return;
+            }
+            selectedTowerType = null;
+            selectedSupportTargeting = selectedSupportTargeting === 'missile-grid' ? null : 'missile-grid';
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(null);
+            hud.setCommandMessage(selectedSupportTargeting ? 'Выбери зону ракетного удара на карте.' : 'Наведение ракетного удара отменено.');
+        },
+        supportD: () => {
+            if (!gameState) {
+                hud.setCommandMessage(t('game.battleLoading'));
+                return;
+            }
+            selectedTowerType = null;
+            selectedSupportTargeting = selectedSupportTargeting === 'siege-lance' ? null : 'siege-lance';
+            runtime.hoverBuildTile = null;
+            syncCanvasCursor();
+            hud.setBuildSelection(null);
+            hud.setCommandMessage(selectedSupportTargeting ? 'Выбери зону удара осадного копья на карте.' : 'Наведение осадного копья отменено.');
         },
     });
 }
 
 function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => void {
     return (event: MouseEvent) => {
-        if (!selectedTowerType || !gameState || !runtime.map) return;
+        if (!gameState || !runtime.map) return;
         const map = runtime.map;
         const rect = canvas.getBoundingClientRect();
         const localX = event.clientX - rect.left;
         const localY = event.clientY - rect.top;
+        if (selectedSupportTargeting) {
+            const { wx, wy } = canvasPointToWorld(localX, localY, canvas, runtime.cameraCenter, runtime.zoom);
+            const result = activateSupport(
+                selectedSupportTargeting,
+                gameState,
+                blockchainService as unknown as BlockchainService,
+                { wx, wy },
+            );
+            hud.setCommandMessage(result.message);
+            if (result.ok) {
+                selectedSupportTargeting = null;
+                runtime.hoverBuildTile = null;
+                syncCanvasCursor();
+            }
+            return;
+        }
+        if (!selectedTowerType) return;
         if (selectedTowerType === 'sell') {
             const clickedTile = canvasClickToTile(
                 localX,
@@ -638,7 +808,7 @@ function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => vo
                 building.tileCol === clickedTile.col && building.tileRow === clickedTile.row
             ));
             if (!target) {
-                hud.setCommandMessage('Click a deployed tower to salvage it and recover energy.');
+                hud.setCommandMessage(t('game.salvageClick'));
                 return;
             }
 
@@ -650,7 +820,7 @@ function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => vo
             }
 
             runtime.status = `${target.type === 'attack' ? 'Attack' : 'Buff'} tower salvaged at ${clickedTile.col},${clickedTile.row}.`;
-            hud.setCommandMessage(`${target.type === 'attack' ? 'Attack' : 'Support'} Tower salvaged. Recovered E ${refunded}.`);
+            hud.setCommandMessage(t('game.salvaged', { tower: target.type === 'attack' ? 'Attack' : 'Support', energy: refunded }));
             selectedTowerType = null;
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
@@ -661,11 +831,11 @@ function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => vo
         const zoneLayer = map.layers?.zones ?? [];
         const hoveredTile = runtime.hoverBuildTile;
         if (!hoveredTile) {
-            hud.setCommandMessage('Move the cursor over a highlighted tile before placing a tower.');
+            hud.setCommandMessage(t('game.highlightTile'));
             return;
         }
         if (!hoveredTile) {
-            hud.setCommandMessage('Наведи курсор на подсвеченный тайл и ставь башню только в него.');
+            hud.setCommandMessage(t('game.highlightTileRuHint'));
             return;
         }
         const { col, row } = hoveredTile;
@@ -682,18 +852,30 @@ function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => vo
             ? `${placedType === 'attack' ? 'Attack' : 'Buff'} tower placed at ${col},${row}.`
             : `Cannot place ${placedType} tower at ${col},${row}.`;
         if (placed) {
-            hud.setCommandMessage(placedType === 'attack' ? 'Attack Tower placed. Choose another tower or keep defending.' : 'Support Tower placed. Choose another tower or keep defending.');
+            hud.setCommandMessage(placedType === 'attack' ? t('game.towerPlacedAttack') : t('game.towerPlacedBuff'));
             selectedTowerType = null;
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
             hud.setBuildSelection(null);
         } else {
-            hud.setCommandMessage('Cannot build here. Click a valid highlighted tile and make sure you have enough energy.');
+            hud.setCommandMessage(t('game.buildInvalid'));
         }
     };
 }
 
 function cleanupGameSession(): void {
+    if (isBattleSessionEnabled() && !sessionScoreSubmitStarted) {
+        void blockchainService.endSession().catch((err) => {
+            console.warn('[Phase5] endSession on menu exit failed (non-blocking):', err);
+        });
+    }
+    clearBattleSessionMode();
+    sessionLayer.disconnect();
+    emitBlockchainStatus({
+        mode: 'offline',
+        status: 'ended',
+        message: 'Battle session closed.',
+    });
     unbindInput();
     if (gameState) bossSystem.forceReset(gameState);
     gameState = null;
@@ -707,6 +889,7 @@ function cleanupGameSession(): void {
     gameScreenHudRef = null;
     winLossShown = false;
     selectedTowerType = null;
+    selectedSupportTargeting = null;
     runtime.hoverBuildTile = null;
     runtime.keys.clear();
 }
@@ -897,18 +1080,54 @@ function unbindInput(): void {
 
 async function loadMap(showReloadStatus = false): Promise<void> {
     runtime.error = null;
-    runtime.status = showReloadStatus ? 'Reloading active map...' : 'Loading active map...';
+    runtime.status = showReloadStatus ? t('game.reloadingActiveMap') : t('game.loadingActiveMap');
     sidePanel.resetState();
+    const battleSessionEnabled = isBattleSessionEnabled();
+    emitBlockchainStatus({
+        mode: 'cheap-tx',
+        status: 'connecting',
+        message: t('game.sessionConnecting'),
+    });
 
-    // Phase 5: Connect to MagicBlock devnet (5s timeout guard)
-    if (!sessionLayer.isConnected) {
+    if (!battleSessionEnabled) {
+        runtime.error = t('game.onChainRequired');
+        runtime.status = t('game.offlineUnsupported');
+        emitBlockchainStatus({
+            mode: 'cheap-tx',
+            status: 'fallback',
+            message: t('game.returnToMenuSession'),
+        });
+        return;
+    }
+
+    const { publicKey } = getCurrentState();
+    if (!publicKey) {
+        runtime.error = t('game.walletNotConnected');
+        runtime.status = t('game.connectWalletFirst');
+        emitBlockchainStatus({
+            mode: 'cheap-tx',
+            status: 'fallback',
+            message: 'Wallet required. Connect wallet before entering battle.',
+        });
+        return;
+    }
+
+    const nextSessionLayer = await ensureSessionLayer();
+    if (!nextSessionLayer.isConnected) {
         try {
-            await sessionLayer.connect();
+            await nextSessionLayer.connect();
         } catch (err) {
-            if (err instanceof ChainUnavailableError) {
-                // Non-blocking: log and continue without blockchain — game still works offline
-                console.warn('[Phase5] MagicBlock devnet unavailable — game will run without on-chain events');
-            }
+            runtime.error = err instanceof Error ? err.message : String(err);
+            runtime.status = t('game.sessionRequired');
+            emitBlockchainStatus({
+                mode: 'cheap-tx',
+                status: 'fallback',
+                message: isChainUnavailableError(err)
+                    ? t('game.magicUnavailable')
+                    : t('game.magicFailed'),
+            });
+            console.warn('[Phase5] MagicBlock session connect failed:', err);
+            return;
         }
     }
 
@@ -928,44 +1147,59 @@ async function loadMap(showReloadStatus = false): Promise<void> {
         runtime.images.clear();
         primeTileImages(parsed);
         primeWorldItemImages(parsed);
-        runtime.status = showReloadStatus ? 'Map reloaded from active-map.json.' : 'Map loaded.';
+        runtime.status = showReloadStatus ? t('game.mapReloaded') : t('game.mapLoaded');
         void sidePanel.refreshMagicBlockTransactions();
 
-        // Initialize Phase 3 game systems after map is loaded
+        const nextBlockchainService = await ensureBlockchainService();
+        blockchainService = nextBlockchainService;
+        nextBlockchainService.resetSessionStats();
+        try {
+            await nextBlockchainService.initSession(publicKey);
+            emitBlockchainStatus({
+                mode: 'cheap-tx',
+                status: 'active',
+                message: t('game.sessionActive'),
+            });
+        } catch (err) {
+            sessionLayer.disconnect();
+            blockchainService = createNoopBlockchainService();
+            runtime.error = err instanceof Error ? err.message : String(err);
+            runtime.status = t('game.contractInitFailed');
+            emitBlockchainStatus({
+                mode: 'cheap-tx',
+                status: 'fallback',
+                message: t('game.sessionInitFailed'),
+            });
+            console.warn('[Phase5] initSession failed; blocking battle start:', err);
+            return;
+        }
+
         gameState = createGameState(parsed);
         waveController = new WaveController();
         unitSystem = new UnitSystem();
         buildingSystem = new BuildingSystem();
         projectileSystem = new ProjectileSystem();
         combatSystem = new CombatSystem();
-        buildingSystem.setBlockchainService(blockchainService);
-        combatSystem.setBlockchainService(blockchainService);
-        bossSystem.setBlockchainService(blockchainService);
+        buildingSystem.setBlockchainService(nextBlockchainService as unknown as BlockchainService);
+        projectileSystem.setBlockchainService(nextBlockchainService as unknown as BlockchainService);
+        combatSystem.setBlockchainService(nextBlockchainService as unknown as BlockchainService);
+        bossSystem.setBlockchainService(nextBlockchainService as unknown as BlockchainService);
+        waveController.setBlockchainService(nextBlockchainService as unknown as BlockchainService);
         resourceSystem = new ResourceSystem();
         const arrowImg = new Image();
         arrowImg.src = '/assets/projectiles/Arrow01.png';
         gameRenderer = new GameRenderer(arrowImg);
         winLossShown = false;
         sessionScoreSubmitStarted = false;
-        blockchainService.resetSessionStats();
-
-        // Phase 5: init session on-chain after systems are ready
-        const { publicKey } = getCurrentState();
-        if (publicKey) {
-            void blockchainService.initSession(publicKey).catch((err) => {
-                console.warn('[Phase5] initSession failed (non-blocking):', err);
-            });
-        }
     } catch (error) {
         runtime.map = null;
         runtime.error = error instanceof Error ? error.message : String(error);
-        runtime.status = 'Unable to load active map.';
+        runtime.status = t('game.mapLoadFailed');
     }
 }
-
 function validateMap(map: RuntimeMap): void {
     if (!Number.isFinite(map.width) || !Number.isFinite(map.height) || !Number.isFinite(map.tileWidth) || !Number.isFinite(map.tileHeight)) {
-        throw new Error('Map dimensions are missing or invalid.');
+        throw new Error(t('game.invalidMap'));
     }
 }
 
@@ -993,7 +1227,7 @@ function getStartCenter(map: RuntimeMap): CameraPoint {
 function resetCameraToMapStart(): void {
     if (!runtime.map) return;
     runtime.cameraCenter = getStartCenter(runtime.map);
-    runtime.status = 'Camera reset to map start.';
+    runtime.status = t('game.cameraReset');
 }
 
 function frame(now: number): void {
@@ -1024,6 +1258,7 @@ function update(dt: number): void {
     // Phase 3: update game systems each frame (only when game is active)
     if (gameState && gameState.phase === 'playing') {
         waveController?.update(dt, gameState);
+        updateSupport(dt, gameState, blockchainService as unknown as BlockchainService);
         unitSystem?.update(dt, gameState);
         buildingSystem?.update(dt, gameState);
         projectileSystem?.update(dt, gameState);
@@ -1048,6 +1283,8 @@ function update(dt: number): void {
             citadelMaxHp: gameState.citadelMaxHp,
             resources: gameState.resources,
             crystals: gameState.crystals ?? 0,
+            latfa: gameState.latfa ?? 0,
+            schematics: gameState.schematics ?? 0,
             armedAction: selectedTowerType,
             waveTimer: gameState.waveTimer,
             enemiesAlive: enemyUnits.length,
@@ -1058,6 +1295,17 @@ function update(dt: number): void {
             canSalvage: gameState.buildings.length > 0,
             canAffordViking: canRecruitUnit('light-ally', gameState),
             canAffordCollector: canRecruitUnit('collector', gameState),
+            canAffordCybernetic: canRecruitUnit('cybernetic', gameState),
+            cyberneticCooldown: getCyberneticCooldownRemaining(gameState),
+            cyberneticSlots: getCyberneticSlotsRemaining(gameState),
+            canSupportOverdrive: canActivateSupport('overdrive', gameState),
+            canSupportOrbital: canActivateSupport('orbital-drop', gameState),
+            canSupportMissile: canActivateSupport('missile-grid', gameState),
+            canSupportLance: canActivateSupport('siege-lance', gameState),
+            supportOverdriveCooldown: getSupportCooldownRemaining('overdrive', gameState),
+            supportOrbitalCooldown: getSupportCooldownRemaining('orbital-drop', gameState),
+            supportMissileCooldown: getSupportCooldownRemaining('missile-grid', gameState),
+            supportLanceCooldown: getSupportCooldownRemaining('siege-lance', gameState),
         });
 
         // Win/loss detection — show overlay once
@@ -1107,6 +1355,10 @@ function render(): void {
     }
 
     drawWorldItems(runtime.map, 'foreground');
+
+    if (gameState && gameRenderer) {
+        gameRenderer.renderDropPodOverlay(ctx, gameState, runtime.cameraCenter, runtime.zoom);
+    }
 
     syncHud();
 }
@@ -1251,7 +1503,7 @@ function drawSceneMarkers(map: RuntimeMap): void {
     const citadel = map.scene?.citadel;
     if (citadel) {
         const screen = worldToScreen(citadel.x, citadel.y);
-        drawMarker(screen.x, screen.y, 16, '#63d9ff', 'Citadel');
+        drawMarker(screen.x, screen.y, 16, '#63d9ff', t('game.citadelMarker'));
     }
 
     const portals = map.scene?.portals ?? [];
@@ -1685,6 +1937,64 @@ function drawCameraFocus(map: RuntimeMap): void {
 }
 
 function drawBuildPlacementPreview(map: RuntimeMap): void {
+    if (selectedSupportTargeting && runtime.hoverBuildTile) {
+        const { col, row } = runtime.hoverBuildTile;
+        if (col < 0 || row < 0 || col >= map.width || row >= map.height) return;
+        const center = tileToWorld(map, col, row);
+        const screen = worldToScreen(center.x, center.y);
+        const radius = getSupportPreviewRadius(selectedSupportTargeting) * runtime.zoom;
+        const pulse = 0.84 + Math.sin(performance.now() / 220) * 0.08;
+        const isLance = selectedSupportTargeting === 'siege-lance';
+        const outerColor = isLance ? 'rgba(255, 182, 150, 0.92)' : 'rgba(176, 242, 255, 0.92)';
+        const innerColor = isLance ? 'rgba(255, 122, 88, 0.22)' : 'rgba(92, 214, 255, 0.2)';
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        const fill = ctx.createRadialGradient(screen.x, screen.y, radius * 0.12, screen.x, screen.y, radius * 1.2);
+        fill.addColorStop(0, innerColor);
+        fill.addColorStop(0.48, isLance ? 'rgba(255, 144, 104, 0.1)' : 'rgba(104, 218, 255, 0.1)');
+        fill.addColorStop(1, 'rgba(18, 34, 56, 0)');
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, radius * 1.02, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = outerColor;
+        ctx.lineWidth = Math.max(2, runtime.zoom * 1.8);
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, radius * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = isLance ? 'rgba(255, 232, 220, 0.8)' : 'rgba(228, 252, 255, 0.82)';
+        ctx.lineWidth = Math.max(1, runtime.zoom * 1.1);
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, radius * (0.58 + (1 - pulse) * 0.2), 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = isLance ? 'rgba(255, 166, 124, 0.55)' : 'rgba(142, 230, 255, 0.52)';
+        ctx.lineWidth = Math.max(1, runtime.zoom);
+        for (let i = 0; i < 4; i += 1) {
+            const angle = performance.now() / 520 + i * (Math.PI / 2);
+            const inner = radius * 0.26;
+            const outer = radius * 0.92;
+            ctx.beginPath();
+            ctx.moveTo(
+                screen.x + Math.cos(angle) * inner,
+                screen.y + Math.sin(angle) * inner * 0.78,
+            );
+            ctx.lineTo(
+                screen.x + Math.cos(angle) * outer,
+                screen.y + Math.sin(angle) * outer * 0.78,
+            );
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = isLance ? 'rgba(255, 214, 196, 0.9)' : 'rgba(226, 251, 255, 0.9)';
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, Math.max(2.4, 3.2 * runtime.zoom), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+    }
     if (selectedTowerType === 'sell') return;
     if (!selectedTowerType || !runtime.hoverBuildTile) return;
 
@@ -2273,3 +2583,4 @@ function clampNumber(value: number, min: number, max: number): number {
     if (max < min) return (min + max) / 2;
     return Math.max(min, Math.min(max, value));
 }
+
