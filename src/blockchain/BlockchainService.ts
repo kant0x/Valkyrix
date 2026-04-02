@@ -1,80 +1,206 @@
 import { ConnectionMagicRouter } from '@magicblock-labs/ephemeral-rollups-sdk';
-import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
+import { Keypair, PublicKey, SystemProgram, Transaction, type TransactionInstruction } from '@solana/web3.js';
 import { getCurrentState, getProvider } from '../wallet/WalletService';
-import {
-  MAGIC_ROUTER_DEVNET,
-  MAGIC_ROUTER_WS_DEVNET,
-  type BossOutcomePayload,
-  type CreatePayload,
-  type KillPayload,
-} from './blockchain.types';
+import { setBattleSessionSigner } from './BattleSessionState';
+import { MAGIC_ROUTER_DEVNET, MAGIC_ROUTER_WS_DEVNET } from './blockchain.types';
+import { emitBlockchainTx } from './blockchainEvents';
+import type {
+  PlayerLedgerSnapshot,
+  ValkyrixBossOutcome,
+  ValkyrixGameOutcome,
+  ValkyrixGameplayEntity,
+} from './ValkyrixLedgerClient';
+import { ValkyrixLedgerClient } from './ValkyrixLedgerClient';
 
-const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
-
-type BlockchainPayload = KillPayload | CreatePayload | BossOutcomePayload;
 type SessionStats = {
   kills: number;
   creates: number;
   bossNegotiated: boolean;
 };
 
+type AccountInfoLike = {
+  data: Uint8Array;
+} | null;
+
 type BlockchainConnection = Pick<
   ConnectionMagicRouter,
   never
 > & {
-  getLatestBlockhash(): Promise<{ blockhash: string }>;
+  getLatestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight?: number }>;
+  prepareTransaction?(transaction: Transaction): Promise<Transaction>;
+  getAccountInfo(pubkey: PublicKey): Promise<AccountInfoLike>;
   sendRawTransaction(
-    rawTransaction: Uint8Array | Buffer,
+    rawTransaction: Uint8Array,
     options?: { skipPreflight?: boolean },
   ): Promise<string>;
+  confirmTransaction?(
+    strategy: {
+      signature: string;
+      blockhash: string;
+      lastValidBlockHeight: number;
+    },
+    commitment?: 'processed' | 'confirmed' | 'finalized',
+  ): Promise<unknown>;
 };
+
+type LedgerClientLike = Pick<
+  ValkyrixLedgerClient,
+  | 'deriveGameConfigPda'
+  | 'derivePlayerLedgerPda'
+  | 'buildInitializeGameInstruction'
+  | 'buildInitializePlayerInstruction'
+  | 'buildStartSessionInstruction'
+  | 'buildRecordKillInstruction'
+  | 'buildRecordCreateInstruction'
+  | 'buildRecordBossOutcomeInstruction'
+  | 'buildRecordWaveStartInstruction'
+  | 'buildRecordGameOutcomeInstruction'
+  | 'buildFinalizeSessionInstruction'
+  | 'decodePlayerLedgerAccount'
+>;
+
+const GAMEPLAY_ENTITY_MAP: Record<string, ValkyrixGameplayEntity> = {
+  'attack-tower': 'attack-tower',
+  'buff-tower': 'buff-tower',
+  'light-ally': 'light-ally',
+  'heavy-ally': 'heavy-ally',
+  collector: 'collector',
+  cybernetic: 'berserker',
+  berserker: 'berserker',
+  guardian: 'guardian',
+  'light-enemy': 'light-enemy',
+  'heavy-enemy': 'heavy-enemy',
+  'ranged-enemy': 'ranged-enemy',
+  'boss-enemy': 'boss-enemy',
+};
+
+const SESSION_DURATION_SECONDS = 60 * 30;
+const SESSION_SIGNER_LAMPORTS = 2_000_000;
+const SCORE_PER_KILL = 10;
+const SCORE_PER_CREATE = 1;
+const SCORE_BOSS_OUTCOME = 1_000;
 
 export class BlockchainService {
   private connection: BlockchainConnection;
+  private ledgerClient: LedgerClientLike;
   private sessionStats: SessionStats = {
     kills: 0,
     creates: 0,
     bossNegotiated: false,
   };
+  private sessionActive = false;
+  private sessionWallet: string | null = null;
+  private sessionSigner: Keypair | null = null;
+  private sessionExpiresAt = 0;
+  private sessionEventIndex = 0n;
+  private writeQueue: Promise<unknown> = Promise.resolve();
 
-  constructor(connection?: BlockchainConnection) {
+  constructor(connection?: BlockchainConnection, ledgerClient?: LedgerClientLike) {
     this.connection = connection ?? new ConnectionMagicRouter(MAGIC_ROUTER_DEVNET, {
       wsEndpoint: MAGIC_ROUTER_WS_DEVNET,
     });
+    this.ledgerClient = ledgerClient ?? new ValkyrixLedgerClient();
   }
 
   async recordKill(unitType: string, walletPubkey: string | null): Promise<void> {
     this.sessionStats.kills += 1;
-    if (!walletPubkey) return;
-    await this.sendMemoTx({
-      walletPubkey,
-      unitType,
-      timestamp: Date.now(),
+    const entity = this.resolveGameplayEntity(unitType, 'record_kill');
+    if (!entity) return;
+    if (!this.canWriteEvent(walletPubkey, 'record_kill')) return;
+    await this.queueWrite(async () => {
+      const eventIndex = this.sessionEventIndex + 1n;
+      await this.sendSessionInstruction(
+        this.ledgerClient.buildRecordKillInstruction(
+          walletPubkey,
+          this.sessionSigner!.publicKey,
+          entity,
+          eventIndex,
+        ),
+        'record_kill',
+        { entity },
+      );
+      this.sessionEventIndex = eventIndex;
     });
   }
 
   async recordCreate(unitType: string, walletPubkey: string | null): Promise<void> {
     this.sessionStats.creates += 1;
-    if (!walletPubkey) return;
-    await this.sendMemoTx({
-      walletPubkey,
-      unitType,
-      timestamp: Date.now(),
+    const entity = this.resolveGameplayEntity(unitType, 'record_create');
+    if (!entity) return;
+    if (!this.canWriteEvent(walletPubkey, 'record_create')) return;
+    await this.queueWrite(async () => {
+      const eventIndex = this.sessionEventIndex + 1n;
+      await this.sendSessionInstruction(
+        this.ledgerClient.buildRecordCreateInstruction(
+          walletPubkey,
+          this.sessionSigner!.publicKey,
+          entity,
+          eventIndex,
+        ),
+        'record_create',
+        { entity },
+      );
+      this.sessionEventIndex = eventIndex;
     });
   }
 
   async recordBossOutcome(
-    outcome: 'negotiated' | 'killed',
+    outcome: ValkyrixBossOutcome,
     walletPubkey: string | null,
   ): Promise<void> {
     if (outcome === 'negotiated') {
       this.sessionStats.bossNegotiated = true;
     }
-    if (!walletPubkey) return;
-    await this.sendMemoTx({
-      walletPubkey,
-      outcome,
-      timestamp: Date.now(),
+    if (!this.canWriteEvent(walletPubkey, 'record_boss_outcome')) return;
+    await this.queueWrite(async () => {
+      const eventIndex = this.sessionEventIndex + 1n;
+      await this.sendSessionInstruction(
+        this.ledgerClient.buildRecordBossOutcomeInstruction(
+          walletPubkey,
+          this.sessionSigner!.publicKey,
+          outcome,
+          eventIndex,
+        ),
+        'record_boss_outcome',
+        { outcome },
+      );
+      this.sessionEventIndex = eventIndex;
+    });
+  }
+
+  async recordWaveStart(waveNumber: number, walletPubkey: string | null): Promise<void> {
+    if (!this.canWriteEvent(walletPubkey, 'record_wave_start')) return;
+    await this.queueWrite(async () => {
+      const eventIndex = this.sessionEventIndex + 1n;
+      await this.sendSessionInstruction(
+        this.ledgerClient.buildRecordWaveStartInstruction(
+          walletPubkey,
+          this.sessionSigner!.publicKey,
+          waveNumber,
+          eventIndex,
+        ),
+        'record_wave_start',
+        {},
+      );
+      this.sessionEventIndex = eventIndex;
+    });
+  }
+
+  async recordGameOutcome(outcome: ValkyrixGameOutcome, walletPubkey: string | null): Promise<void> {
+    if (!this.canWriteEvent(walletPubkey, 'record_game_outcome')) return;
+    await this.queueWrite(async () => {
+      const eventIndex = this.sessionEventIndex + 1n;
+      await this.sendSessionInstruction(
+        this.ledgerClient.buildRecordGameOutcomeInstruction(
+          walletPubkey,
+          this.sessionSigner!.publicKey,
+          outcome,
+          eventIndex,
+        ),
+        'record_game_outcome',
+        {},
+      );
+      this.sessionEventIndex = eventIndex;
     });
   }
 
@@ -89,7 +215,7 @@ export class BlockchainService {
       kills,
       creates,
       bossNegotiated,
-      score: kills * 10 + creates + (bossNegotiated ? 10000 : 0),
+      score: kills * SCORE_PER_KILL + creates * SCORE_PER_CREATE + (bossNegotiated ? SCORE_BOSS_OUTCOME : 0),
     };
   }
 
@@ -99,81 +225,251 @@ export class BlockchainService {
       creates: 0,
       bossNegotiated: false,
     };
+    this.sessionActive = false;
+    this.sessionWallet = null;
+    this.sessionSigner = null;
+    this.sessionExpiresAt = 0;
+    this.sessionEventIndex = 0n;
+    setBattleSessionSigner(null);
   }
 
-  /**
-   * Called at session start after SessionLayer.connect().
-   * Initializes or delegates the PlayerStats PDA to the MagicBlock ephemeral rollup.
-   * No-op if the Anchor program has not been deployed yet (VALKYRIX_LEDGER_PROGRAM_ID is placeholder).
-   */
   async initSession(walletPubkey: string): Promise<void> {
-    // Fire-and-forget: PDA delegation is non-blocking and best-effort.
-    // Full ER delegation requires the Anchor program deployed at VALKYRIX_LEDGER_PROGRAM_ID.
-    void this.sendMemoTx({
-      walletPubkey,
-      unitType: 'session-init',
-      timestamp: Date.now(),
-    }).catch((error) => {
-      console.warn('[BlockchainService] initSession non-blocking TX failed:', error);
+    await this.queueWrite(async () => {
+      const walletKey = new PublicKey(walletPubkey);
+      const gameConfigPda = this.ledgerClient.deriveGameConfigPda();
+      const playerLedgerPda = this.ledgerClient.derivePlayerLedgerPda(walletKey);
+      const sessionSigner = Keypair.generate();
+      const sessionExpiresAt = Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS;
+
+      try {
+        const setupInstructions: TransactionInstruction[] = [];
+        const gameConfigInfo = await this.connection.getAccountInfo(gameConfigPda);
+        if (!gameConfigInfo) {
+          setupInstructions.push(this.ledgerClient.buildInitializeGameInstruction(walletKey));
+        }
+
+        const playerLedgerInfo = await this.connection.getAccountInfo(playerLedgerPda);
+        if (!playerLedgerInfo) {
+          setupInstructions.push(this.ledgerClient.buildInitializePlayerInstruction(walletKey));
+        }
+
+        const sessionNonce = BigInt(Date.now());
+        setupInstructions.push(
+          SystemProgram.createAccount({
+            fromPubkey: walletKey,
+            newAccountPubkey: sessionSigner.publicKey,
+            lamports: SESSION_SIGNER_LAMPORTS,
+            space: 0,
+            programId: SystemProgram.programId,
+          }),
+        );
+        setupInstructions.push(
+          this.ledgerClient.buildStartSessionInstruction(
+            walletKey,
+            sessionSigner.publicKey,
+            sessionNonce,
+            BigInt(sessionExpiresAt),
+          ),
+        );
+        await this.sendWalletInstructions(
+          setupInstructions,
+          walletPubkey,
+          ['initialize_game', 'initialize_player', 'session_signer_fund', 'start_session'],
+          [sessionSigner],
+        );
+
+        this.sessionWallet = walletPubkey;
+        this.sessionSigner = sessionSigner;
+        this.sessionExpiresAt = sessionExpiresAt;
+        this.sessionActive = true;
+        this.sessionEventIndex = 0n;
+        setBattleSessionSigner(sessionSigner.publicKey.toBase58());
+      } catch (error) {
+        this.sessionWallet = null;
+        this.sessionSigner = null;
+        this.sessionExpiresAt = 0;
+        this.sessionActive = false;
+        this.sessionEventIndex = 0n;
+        setBattleSessionSigner(null);
+        throw error;
+      }
     });
   }
 
-  /**
-   * Called at session end. Undelegates the PlayerStats PDA from the ephemeral rollup.
-   * Returns the authoritative session snapshot from on-chain state.
-   * Falls back to local stats if the TX fails.
-   */
   async endSession(): Promise<{ score: number; kills: number }> {
-    const { kills, creates, bossNegotiated } = this.sessionStats;
-    const score = kills * 10 + creates + (bossNegotiated ? 10000 : 0);
-    // Fire undelegate TX (best-effort; failure is non-blocking)
-    const walletState = getCurrentState();
-    if (walletState.publicKey) {
-      void this.sendMemoTx({
-        walletPubkey: walletState.publicKey,
-        unitType: 'session-end',
-        timestamp: Date.now(),
-      }).catch((error) => {
-        console.warn('[BlockchainService] endSession undelegate TX failed:', error);
-      });
+    const fallback = this.getSessionSnapshot();
+    if (!this.sessionActive || !this.sessionWallet || !this.sessionSigner) {
+      return { score: fallback.score, kills: fallback.kills };
     }
-    return { score, kills };
+
+    const walletPubkey = this.sessionWallet;
+    return this.queueWrite(async () => {
+      await this.sendSessionInstruction(
+        this.ledgerClient.buildFinalizeSessionInstruction(walletPubkey, this.sessionSigner!.publicKey),
+        'finalize_session',
+        {},
+      );
+
+      const ledgerSnapshot = await this.readPlayerLedger(walletPubkey);
+      this.sessionActive = false;
+      this.sessionWallet = null;
+      this.sessionSigner = null;
+      this.sessionExpiresAt = 0;
+      this.sessionEventIndex = 0n;
+      setBattleSessionSigner(null);
+
+      if (!ledgerSnapshot) {
+        return { score: fallback.score, kills: fallback.kills };
+      }
+
+      return {
+        score: ledgerSnapshot.currentSessionScore,
+        kills: ledgerSnapshot.currentSessionKills,
+      };
+    });
   }
 
-  private async sendMemoTx(payload: BlockchainPayload): Promise<void> {
-    const walletState = getCurrentState();
-    if (!walletState.connected || !walletState.walletType) return;
+  private canWriteEvent(walletPubkey: string | null, label: string): walletPubkey is string {
+    if (!walletPubkey) {
+      emitBlockchainTx({ label, status: 'failed', error: 'wallet not connected' });
+      return false;
+    }
+    if (!this.sessionActive || !this.sessionWallet || !this.sessionSigner) {
+      emitBlockchainTx({ label, status: 'failed', error: 'battle session inactive' });
+      return false;
+    }
+    if (walletPubkey !== this.sessionWallet) {
+      emitBlockchainTx({ label, status: 'failed', error: 'wallet changed after session start' });
+      return false;
+    }
+    if (this.sessionExpiresAt > 0 && Math.floor(Date.now() / 1000) > this.sessionExpiresAt) {
+      emitBlockchainTx({ label, status: 'failed', error: 'session key expired' });
+      return false;
+    }
+    return true;
+  }
 
-    const provider = getProvider(walletState.walletType);
-    if (!provider?.signTransaction) return;
+  private async readPlayerLedger(walletPubkey: string): Promise<PlayerLedgerSnapshot | null> {
+    const playerLedgerPda = this.ledgerClient.derivePlayerLedgerPda(walletPubkey);
+    const accountInfo = await this.connection.getAccountInfo(playerLedgerPda);
+    if (!accountInfo?.data) return null;
+    return this.ledgerClient.decodePlayerLedgerAccount(accountInfo.data);
+  }
 
+  private resolveGameplayEntity(
+    unitType: string,
+    label: string,
+  ): ValkyrixGameplayEntity | null {
+    const entity = GAMEPLAY_ENTITY_MAP[unitType];
+    if (entity) return entity;
+    emitBlockchainTx({
+      label,
+      status: 'failed',
+      error: `unsupported gameplay entity: ${unitType}`,
+    });
+    return null;
+  }
+
+  private queueWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.writeQueue.then(() => operation(), () => operation());
+    this.writeQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async sendWalletInstructions(
+    instructions: TransactionInstruction[],
+    walletPubkey: string,
+    labels: string[],
+    extraSigners: Keypair[] = [],
+  ): Promise<string> {
+    for (const label of labels) {
+      emitBlockchainTx({ label, status: 'pending' });
+    }
     try {
-      const feePayer = new PublicKey(payload.walletPubkey);
-      const { blockhash } = await this.connection.getLatestBlockhash();
-      const tx = new Transaction({
-        feePayer,
-        recentBlockhash: blockhash,
-      });
+      const walletState = getCurrentState();
+      if (!walletState.connected || !walletState.walletType || walletState.publicKey !== walletPubkey) {
+        throw new Error(`[BlockchainService] ${labels[labels.length - 1] ?? 'wallet_tx'} requires an active connected wallet`);
+      }
 
-      tx.add(new TransactionInstruction({
-        keys: [{ pubkey: feePayer, isSigner: true, isWritable: false }],
-        programId: MEMO_PROGRAM_ID,
-        data: Buffer.from(JSON.stringify(payload), 'utf-8'),
-      }));
+      const provider = getProvider(walletState.walletType);
+      if (!provider?.signTransaction) {
+        throw new Error(`[BlockchainService] ${labels[labels.length - 1] ?? 'wallet_tx'} requires signTransaction support`);
+      }
+
+      const feePayer = new PublicKey(walletPubkey);
+      const tx = await this.prepareTransaction(feePayer, instructions);
+      if (extraSigners.length > 0) {
+        tx.partialSign(...extraSigners);
+      }
 
       const signedTx = await provider.signTransaction(tx);
-      const rawTx = (signedTx as Transaction).serialize({
-        requireAllSignatures: false,
-        verifySignatures: false,
-      });
-
-      void Promise.resolve(
-        this.connection.sendRawTransaction(rawTx, { skipPreflight: true }),
-      ).catch((error) => {
-        console.warn('[BlockchainService] TX failed (non-blocking):', error);
-      });
+      return this.dispatchSignedTransaction(
+        signedTx as Transaction,
+        labels.map((label) => ({ label })),
+      );
     } catch (error) {
-      console.warn('[BlockchainService] TX failed (non-blocking):', error);
+      const message = error instanceof Error ? error.message : String(error);
+      for (const label of labels) {
+        emitBlockchainTx({ label, status: 'failed', error: message });
+      }
+      throw error;
     }
+  }
+
+  private async sendSessionInstruction(
+    instruction: TransactionInstruction,
+    label: string,
+    detail: { entity?: string; outcome?: string } = {},
+  ): Promise<string> {
+    emitBlockchainTx({ label, status: 'pending', ...detail });
+    try {
+      if (!this.sessionSigner) {
+        throw new Error(`[BlockchainService] ${label} requires an active session signer`);
+      }
+      const tx = await this.prepareTransaction(this.sessionSigner.publicKey, [instruction]);
+      tx.partialSign(this.sessionSigner);
+      return this.dispatchSignedTransaction(tx, [{ label, ...detail }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emitBlockchainTx({ label, status: 'failed', error: message, ...detail });
+      throw error;
+    }
+  }
+
+  private async prepareTransaction(
+    feePayer: PublicKey,
+    instructions: TransactionInstruction[],
+  ): Promise<Transaction> {
+    const tx = new Transaction();
+    tx.feePayer = feePayer;
+    for (const instruction of instructions) {
+      tx.add(instruction);
+    }
+
+    if (this.connection.prepareTransaction) {
+      return this.connection.prepareTransaction(tx);
+    }
+
+    const { blockhash } = await this.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    return tx;
+  }
+
+  private async dispatchSignedTransaction(
+    signedTx: Transaction,
+    labels: Array<{ label: string; entity?: string; outcome?: string }>,
+  ): Promise<string> {
+    const rawTx = signedTx.serialize({
+      requireAllSignatures: false,
+      verifySignatures: false,
+    });
+    const signature = await this.connection.sendRawTransaction(rawTx, { skipPreflight: true });
+    for (const entry of labels) {
+      emitBlockchainTx({ ...entry, status: 'sent', signature });
+    }
+    return signature;
   }
 }
