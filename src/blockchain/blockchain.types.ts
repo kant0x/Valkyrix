@@ -2,21 +2,21 @@
 export interface KillPayload {
   walletPubkey: string;
   unitType: string;
-  timestamp: number;
+  eventIndex: number;
 }
 
 /** Payload sent when the player creates their own unit. */
 export interface CreatePayload {
   walletPubkey: string;
   unitType: string;
-  timestamp: number;
+  eventIndex: number;
 }
 
 /** Payload sent when the player resolves a boss encounter. */
 export interface BossOutcomePayload {
   walletPubkey: string;
   outcome: 'negotiated' | 'killed';
-  timestamp: number;
+  eventIndex: number;
 }
 
 /** One entry in the on-chain leaderboard fetched via SOAR SDK. */
@@ -29,8 +29,8 @@ export interface LeaderboardEntry {
 
 export const MAGIC_ROUTER_DEVNET = 'https://devnet-router.magicblock.app/';
 export const MAGIC_ROUTER_WS_DEVNET = 'wss://devnet-router.magicblock.app/';
-/** Replace after deploying the Anchor program to devnet. */
-export const VALKYRIX_LEDGER_PROGRAM_ID = 'Esj1LL1kQTYZ6kVi2wbiJiHbEs3cAiW6dDsZyjdZpmNo';
+/** Devnet deployment for Valkyrix Ledger. */
+export const VALKYRIX_LEDGER_PROGRAM_ID = 'NkxXENw6u1jWc8iUo28M9NiDVEcoUdqGiGZ3TyNf9Xn';
 export const VALKYRIX_GAME_CONFIG_SEED = 'game-config';
 export const VALKYRIX_PLAYER_LEDGER_SEED = 'player-ledger';
 

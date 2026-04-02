@@ -3,10 +3,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-valkyrix_ledger = "Esj1LL1kQTYZ6kVi2wbiJiHbEs3cAiW6dDsZyjdZpmNo"
+valkyrix_ledger = "NkxXENw6u1jWc8iUo28M9NiDVEcoUdqGiGZ3TyNf9Xn"
 
 [programs.devnet]
-valkyrix_ledger = "Esj1LL1kQTYZ6kVi2wbiJiHbEs3cAiW6dDsZyjdZpmNo"
+valkyrix_ledger = "NkxXENw6u1jWc8iUo28M9NiDVEcoUdqGiGZ3TyNf9Xn"
 
 [provider]
 cluster = "Devnet"
