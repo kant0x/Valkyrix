@@ -186,6 +186,7 @@ describe('createGameState', () => {
 
     expect(state.phase).toBe('playing');
     expect(state.bossNegotiation).toBeUndefined();
+    expect(state.salvageModeActive).toBe(false);
   });
 
   it('accepts negotiation as a valid phase value', () => {

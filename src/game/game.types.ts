@@ -33,11 +33,20 @@ export interface Unit {
   fightingWith: number | null; // id of opponent unit
   attackCooldown: number;      // seconds until next attack
   speedBuff?: number;          // speed multiplier applied by buff towers each frame (1.25 = +25%)
+  attackBuff?: number;         // outgoing damage multiplier from active buffs
+  defenseBuff?: number;        // incoming damage multiplier from active buffs (lower = tougher)
+  buffAura?: 'tower' | 'overdrive';
   laneOffset?: number;         // signed world-space offset across road width for lane spreading
   lastWx?: number;             // previous frame world X for render-facing helpers
   lastWy?: number;             // previous frame world Y for render-facing helpers
   idlePhase?: number;          // low-frequency movement phase for hovering units
   firingFlash?: number;        // seconds remaining to show firing animation (ranged units)
+  dodgeCooldown?: number;      // seconds until the unit can evade the next hit again
+  spawnShield?: number;        // short post-drop protection window for special reinforcements
+  collectorShield?: number;    // strong temporary guard field for collectors under threat
+  attackWindup?: number;       // seconds remaining in the current melee swing
+  attackWindupTotal?: number;  // original melee swing duration for animation sync
+  attackStrikeApplied?: boolean; // true once damage has landed for the current swing
 }
 
 export interface Building {
@@ -82,7 +91,14 @@ export interface ImpactMark {
   radius: number;
   ttl: number;
   maxTtl: number;
-  source?: 'tower' | 'citadel' | 'ranged-unit';
+  source?: 'tower' | 'citadel' | 'ranged-unit' | 'support';
+}
+
+export interface PendingOrbitalStrike {
+  wx: number;
+  wy: number;
+  radius: number;
+  delay: number; // seconds remaining before damage is applied
 }
 
 export interface SpawnQueueEntry {
@@ -97,6 +113,34 @@ export interface Corpse {
   wy: number;
   spriteKey: string;
   diedAtMs: number;
+}
+
+export interface SalvageDrop {
+  id: number;
+  wx: number;
+  wy: number;
+  value: number;
+  kind: 'latfa' | 'schematic';
+}
+
+export type SupportAbilityKey = 'overdrive' | 'orbital-drop' | 'missile-grid' | 'siege-lance';
+
+export interface SupportCooldowns {
+  overdrive: number;
+  'orbital-drop': number;
+  'missile-grid': number;
+  'siege-lance': number;
+}
+
+export interface DropPod {
+  id: number;
+  wx: number;
+  wy: number;
+  anchorWx: number; // path anchor wx (= wx - lane), used for path-snapping on unit deploy
+  anchorWy: number; // path anchor wy (= wy + 24)
+  elapsed: number;
+  spawnCount: number;
+  releasedCount?: number;
 }
 
 export interface BossNegotiationState {
@@ -124,6 +168,17 @@ export interface GameState {
   playerBaseMaxHp: number;   // 300
   resources: number;         // electrolatov
   crystals?: number;         // salvage dropped by enemies and processed by collectors
+  latfa?: number;            // rare salvage collected from the field by collectors
+  schematics?: number;       // orbital support schemas gathered from robot wrecks
+  latfaDrops?: SalvageDrop[];
+  dropPods?: DropPod[];
+  cyberneticCallTimestamps?: number[];
+  lastVikingRecruitAtMs?: number;
+  supportCooldowns?: SupportCooldowns;
+  supportOverdriveTimer?: number;
+  supportOverdrivePulseTimer?: number;
+  salvageModeActive?: boolean;
+  pendingOrbitalStrikes?: PendingOrbitalStrike[];
   bossNegotiation?: BossNegotiationState;  // populated by BossSystem during negotiation phase
   elapsed?: number;          // seconds since game start, accumulated by BossSystem during 'playing' phase
   nextId: number;            // auto-increment for unit/building IDs
@@ -175,7 +230,7 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     role: 'light',
     hp: 50,
     speed: 42,
-    damage: 10,
+    damage: 11,
     attackRate: 1.0,
     sprite: 'viking',     // viking defender
     faction: 'ally',
@@ -184,7 +239,7 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     role: 'heavy',
     hp: 95,
     speed: 30,
-    damage: 18,
+    damage: 20,
     attackRate: 0.8,
     sprite: 'viking',
     faction: 'ally',
@@ -196,6 +251,15 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     damage: 0,
     attackRate: 0,
     sprite: 'collector',  // flying loot drone
+    faction: 'ally',
+  },
+  'cybernetic': {
+    role: 'heavy',
+    hp: 128,
+    speed: 52,
+    damage: 24,
+    attackRate: 1.3,
+    sprite: 'cybernetic',
     faction: 'ally',
   },
 };

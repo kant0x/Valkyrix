@@ -4,6 +4,7 @@
 // The game loop (requestAnimationFrame) runs continuously regardless of overlay state.
 
 import type { ScreenManager } from './ScreenManager';
+import { t } from '../i18n/localization';
 
 const STYLE_ID = 'vk-esc-overlay-style';
 
@@ -26,23 +27,23 @@ export class EscMenuOverlay {
     el.innerHTML = `
       <div class="vk-esc-panel">
         <div class="vk-esc-head">
-          <p class="vk-esc-kicker">Field Console</p>
-          <h2 class="vk-esc-title">System</h2>
+          <p class="vk-esc-kicker">${t('esc.kicker')}</p>
+          <h2 class="vk-esc-title">${t('esc.title')}</h2>
         </div>
-        <button id="btn-resume-battle" class="vk-esc-btn vk-esc-btn-primary">Return to Battle</button>
+        <button id="btn-resume-battle" class="vk-esc-btn vk-esc-btn-primary">${t('esc.resume')}</button>
         <label class="vk-esc-music">
           <input type="checkbox" id="vk-music-toggle" checked />
-          Music
+          ${t('esc.music')}
         </label>
-        <button id="btn-exit-menu" class="vk-esc-btn">Exit to Menu</button>
+        <button id="btn-exit-menu" class="vk-esc-btn">${t('esc.exit')}</button>
         <div id="vk-exit-confirm" class="vk-exit-confirm" style="display:none">
-          <p>Progress from this battle will be lost. Leave the field?</p>
+          <p>${t('esc.confirm')}</p>
           <div class="vk-confirm-buttons">
-            <button id="btn-confirm-exit" class="vk-esc-btn vk-btn-danger">Exit</button>
-            <button id="btn-cancel-exit" class="vk-esc-btn">Stay</button>
+            <button id="btn-confirm-exit" class="vk-esc-btn vk-btn-danger">${t('esc.confirmExit')}</button>
+            <button id="btn-cancel-exit" class="vk-esc-btn">${t('esc.stay')}</button>
           </div>
         </div>
-        <p class="vk-esc-hint">Press ESC to close</p>
+        <p class="vk-esc-hint">${t('esc.hint')}</p>
       </div>
     `;
     container.appendChild(el);
@@ -135,43 +136,57 @@ export class EscMenuOverlay {
     style.textContent = `
       #vk-esc-overlay {
         position: fixed; inset: 0;
-        background: rgba(7,17,29,0.85);
+        background:
+          radial-gradient(circle at top, rgba(62, 126, 186, 0.12), transparent 42%),
+          rgba(7,17,29,0.88);
         align-items: center; justify-content: center;
         z-index: 100;
+        backdrop-filter: blur(12px);
       }
       .vk-esc-panel {
-        width: min(92vw, 360px);
+        width: min(92vw, 420px);
         background:
-          linear-gradient(180deg, rgba(12,21,33,0.98), rgba(6,11,18,0.98));
+          linear-gradient(180deg, rgba(13, 21, 31, 0.98), rgba(6, 11, 18, 0.98)),
+          linear-gradient(135deg, rgba(58, 118, 176, 0.16), transparent 55%);
         border: 1px solid rgba(151,194,235,0.22);
-        border-radius: 18px;
-        padding: 28px;
+        border-radius: 24px;
+        padding: 30px;
         display: flex;
         flex-direction: column;
         gap: 18px;
         align-items: stretch;
         box-shadow:
-          0 24px 48px rgba(0, 0, 0, 0.34),
-          inset 0 1px 0 rgba(233, 244, 255, 0.04);
+          0 36px 72px rgba(0, 0, 0, 0.4),
+          inset 0 1px 0 rgba(233, 244, 255, 0.04),
+          inset 0 0 0 1px rgba(36, 64, 96, 0.2);
       }
-      .vk-esc-head { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+      .vk-esc-head {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(129, 178, 220, 0.12);
+      }
       .vk-esc-kicker {
         margin: 0;
         color: #7bb9e8;
         font-size: 0.72rem;
         letter-spacing: 0.18em;
         text-transform: uppercase;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
       }
       .vk-esc-title {
         margin: 0;
         color: #e0f1ff;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
-        font-size: 1.8rem;
+        font-family: "Copperplate Gothic Bold", "Bahnschrift", sans-serif;
+        font-size: 1.95rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
       .vk-esc-music {
         color: #9dc0de;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
         display: flex;
         gap: 8px;
         align-items: center;
@@ -179,14 +194,18 @@ export class EscMenuOverlay {
         justify-content: center;
       }
       .vk-esc-btn {
-        background: linear-gradient(180deg, rgba(27,47,71,0.92), rgba(14,25,38,0.98));
+        background:
+          linear-gradient(180deg, rgba(27,47,71,0.92), rgba(14,25,38,0.98)),
+          linear-gradient(135deg, rgba(84, 198, 255, 0.08), transparent 52%);
         color: #d9ecff;
         border: 1px solid rgba(151,194,235,0.28);
-        border-radius: 12px;
-        padding: 12px 18px;
+        border-radius: 16px;
+        padding: 13px 18px;
         font-size: 0.95rem;
         cursor: pointer;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
         width: 100%;
         transition: transform 0.15s, border-color 0.15s, background 0.15s;
       }
@@ -196,7 +215,7 @@ export class EscMenuOverlay {
         border-color: rgba(174,213,247,0.4);
       }
       .vk-esc-btn-primary {
-        box-shadow: 0 0 0 1px rgba(105, 203, 255, 0.12), 0 0 20px rgba(76, 192, 255, 0.12);
+        box-shadow: 0 0 0 1px rgba(105, 203, 255, 0.12), 0 0 24px rgba(76, 192, 255, 0.14);
       }
       .vk-btn-danger {
         border-color: rgba(240,106,106,0.45);
@@ -212,14 +231,14 @@ export class EscMenuOverlay {
         align-items: center;
         width: 100%;
         padding: 14px;
-        border-radius: 14px;
+        border-radius: 16px;
         background: rgba(9, 15, 24, 0.86);
         border: 1px solid rgba(240,106,106,0.18);
       }
       .vk-exit-confirm p {
         margin: 0;
         color: #d9ecff;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
         font-size: 0.92rem;
         line-height: 1.45;
         text-align: center;
@@ -229,8 +248,10 @@ export class EscMenuOverlay {
         margin: 0;
         color: #6f8faa;
         font-size: 0.75rem;
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
         text-align: center;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
     `;
     document.head.appendChild(style);

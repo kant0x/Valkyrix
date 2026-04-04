@@ -16,14 +16,27 @@ Task 1 (automated) complete. Task 2 awaits human verification.
 
 ### Task 1: Full Test Suite — PASSED
 
-- `npx vitest run` — **196/196 tests passed** across 20 test files
-- Includes BossSystem.test.ts (39 tests), NegotiationOverlay.test.ts (8 tests), all Phase 3 tests
-- Pre-existing TypeScript warnings in GameRenderer.ts (TS6133 unused vars) — outside Phase 4 scope
+- `npx vitest run` — **200/200 tests passed** across 20 test files
+- Gemini AI replaced with scripted BossDialog (107 scripted replies)
+- Classification by word count: 1 word=bad, 2–4=neutral, 5+=good
+- 4 new BossDialog classification tests added
 
-## Key Files Verified
+### Design Change Applied
 
-- `src/game/BossSystem.ts` — timer trigger at 300s, boss spawn, horde, success/failure
-- `src/screens/NegotiationOverlay.ts` — scale bar 0–12, attempts 3, 3-outcome Gemini
+Per player feedback during verification: replaced live Gemini AI with
+a scripted dialog engine (src/game/BossDialog.ts).
+
+Lore: AI robots conquer the world, boss demands surrender of the
+Citadel (Apollo — last human survival data). Boss = Пожиратель Миров,
+cold logical machine. Short answers = contempt. Detailed = respect.
+
+Content: 5 openings + 33 bad + 34 neutral + 35 good = 107 replies.
+
+## Key Files
+
+- `src/game/BossDialog.ts` — dialog engine + all 107 scripted replies
+- `src/screens/NegotiationOverlay.ts` — uses BossDialog, no fetch
+- `src/screens/NegotiationOverlay.test.ts` — 12 tests, all green
 
 ## Pending
 

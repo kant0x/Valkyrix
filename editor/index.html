@@ -1,0 +1,292 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Valkyrix Editor</title>
+    <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button id="btn-new" class="btn" title="Создать новую пустую карту с правильными дефолтами камеры">Новая карта</button>
+      <button id="btn-save" class="btn btn-warn" title="Сохранить карту в файл (появится чеклист камеры)">Сохранить</button>
+      <button id="btn-activate" class="btn btn-accent" onclick="activateCurrentMap()" title="Сохранить + скопировать в active-map.json — ТОЛЬКО это читает игра!">Активировать</button>
+      <div id="topbar-sep"></div>
+      <button id="btn-fit-map" class="btn" onclick="fitMapToView()" title="Вписать всю карту в экран [F] — показывает карту целиком">Fit [F]</button>
+      <button id="btn-game-panel" class="btn" onclick="toggleGamePanel()" title="Режим игры — зум, рельсы и границы камеры в одном месте">Режим игры</button>
+      <div id="topbar-sep"></div>
+      <button id="btn-load-active" class="btn" title="Загрузить текущую активную карту (active-map.json)">Загрузить</button>
+      <button id="btn-load-assets" class="btn" title="Обновить список тайлов/зданий из папки assets">Ассеты</button>
+      <select id="map-preset" class="sel" title="Открыть карту из файла"></select>
+      <input id="map-name" class="inp" title="Имя файла для сохранения (без .json)" style="width:130px" value="valkyrix-map" />
+      <div id="topbar-sep"></div>
+      <select id="layer-sel" class="sel" title="Активный слой для рисования">
+        <option value="ground">Земля</option>
+        <option value="paths">Дорога</option>
+        <option value="cam">CAM камера</option>
+        <option value="zones">? Зоны</option>
+        <option value="decor">Декор</option>
+        <option value="citadel">Цитадель</option>
+        <option value="spawn">Спавн</option>
+      </select>
+      <select id="brush-size" class="sel" title="Размер кисти"><option value="1">1?1</option><option value="2">2?2</option><option value="4" selected>4?4</option></select>
+      <select id="paint-mode" class="sel" title="Режим: рисовать или стирать тайлы"><option value="paint">? Рисовать</option><option value="erase">? Стереть</option></select>
+      <button id="btn-lang" class="btn" title="Переключить язык интерфейса RU/EN">RU</button>
+      <label class="check" title="Показать/скрыть сетку тайлов [G+Shift]"><input type="checkbox" id="show-grid" checked /><span id="lbl-grid">Сетка</span></label>
+      <div id="status" style="margin-left:auto;padding:0 10px;height:26px;display:inline-flex;align-items:center;border-radius:2px;border:1px solid var(--border);background:#060c18;font-size:10px;color:var(--soft);flex-shrink:0">Готово</div>
+    </header>
+    <div id="main">
+      <aside id="left">
+        <h3 id="title-left">Плитки</h3>
+        <div id="asset-tabs">
+          <button type="button" class="tab-btn active" data-tab="tiles" id="tab-tiles">ТАЙЛЫ</button>
+          <button type="button" class="tab-btn" data-tab="buildings" id="tab-buildings">ЗДАНИЯ</button>
+          <button type="button" class="tab-btn" data-tab="objects" id="tab-objects">ОБЪЕКТЫ</button>
+          <button type="button" class="tab-btn" data-tab="graphics" id="tab-graphics">ГРАФИКА</button>
+        </div>
+        <div id="tile-search-wrap"><input id="tile-search" placeholder="Поиск плитки" /></div>
+        <div id="tile-list"></div>
+        <div id="entity-size-bar" style="display:none;padding:5px 8px;border-top:1px solid var(--border);background:#04080f">
+          <div style="font-size:9px;color:var(--soft);margin-bottom:4px" id="size-bar-label">Размер (тайлы) — новые объекты</div>
+          <div style="display:flex;align-items:center;gap:5px">
+            <span style="font-size:9px;color:var(--head)">Ш:</span>
+            <button class="btn" id="tw-minus" style="width:20px;padding:0;font-size:13px">−</button>
+            <span id="tw-val" style="min-width:18px;text-align:center;font-size:12px;font-weight:bold;color:var(--accent-hi)">1</span>
+            <button class="btn" id="tw-plus" style="width:20px;padding:0;font-size:13px">+</button>
+            <span style="font-size:9px;color:var(--head);margin-left:6px">В:</span>
+            <button class="btn" id="th-minus" style="width:20px;padding:0;font-size:13px">−</button>
+            <span id="th-val" style="min-width:18px;text-align:center;font-size:12px;font-weight:bold;color:var(--accent-hi)">1</span>
+            <button class="btn" id="th-plus" style="width:20px;padding:0;font-size:13px">+</button>
+            <button class="btn" id="deselect-entity" style="margin-left:auto;font-size:9px;display:none">✕ снять</button>
+          </div>
+        </div>
+        <div id="left-foot"><div id="assets-info">плиток: 0</div><div id="selected-info">выбрано gid: 1</div></div>
+      </aside>
+      <section id="center">
+        <canvas id="canvas"></canvas>
+        <div id="overlay"><div id="ov-left">Layer: ground</div><div id="ov-right">Tile: -, -</div></div>
+      </section>
+      <aside id="right">
+        <h3 id="title-right">? Настройки карты</h3>
+
+        <!-- MAP SIZE -->
+        <div class="sec">
+          <div class="sec-title" id="sec-size">Размер карты</div>
+          <div class="hint">Изо-ромб: <b>Ширина?Высота</b> тайлов. Тайл 64?32 = стандарт.</div>
+          <div class="row2">
+            <label class="field" title="Количество тайлов по горизонтали (ось col)">
+              <span id="lbl-width">Ширина (cols)</span>
+              <input id="iw" class="inp" type="number" value="70" min="10" max="500" />
+            </label>
+            <label class="field" title="Количество тайлов по вертикали (ось row)">
+              <span id="lbl-height">Высота (rows)</span>
+              <input id="ih" class="inp" type="number" value="30" min="10" max="300" />
+            </label>
+          </div>
+          <div class="row2">
+            <label class="field" title="Ширина тайла в пикселях. Стандарт: 64">
+              <span id="lbl-tilew">Тайл W (px)</span>
+              <input id="itw" class="inp" type="number" value="64" min="16" max="256" />
+            </label>
+            <label class="field" title="Высота тайла в пикселях. Стандарт: 32">
+              <span id="lbl-tileh">Тайл H (px)</span>
+              <input id="ith" class="inp" type="number" value="32" min="8" max="128" />
+            </label>
+          </div>
+          <button id="btn-sz" class="btn" title="Применить новый размер — пересчитает bounds камеры автоматически">Применить размер > пересчёт bounds</button>
+        </div>
+
+        <!-- LAYER VISIBILITY -->
+        <div class="sec">
+          <div class="sec-title" id="sec-vis">Слои — видимость</div>
+          <div class="hint">Скрытые слои не рисуются на экране, но сохраняются в файл.</div>
+          <label class="check" title="Слой земли — основные тайлы поверхности"><input type="checkbox" data-vis="ground" checked /><span id="vis-ground">Земля (ground)</span></label>
+          <label class="check" title="Слой дороги — по нему ходят враги и следует камера"><input type="checkbox" data-vis="paths" checked /><span id="vis-paths">Дорога (paths)</span></label>
+          <label class="check" title="Слой камеры — рельсы движения камеры"><input type="checkbox" data-vis="cam" checked /><span id="vis-cam">Камера (cam)</span></label>
+          <label class="check" title="Зоны строительства башен"><input type="checkbox" data-vis="zones" checked /><span id="vis-zones">Зоны (zones)</span></label>
+          <label class="check" title="Декоративные тайлы поверх земли"><input type="checkbox" data-vis="decor" checked /><span id="vis-decor">Декор (decor)</span></label>
+          <label class="check" title="Позиция и тайлы цитадели"><input type="checkbox" data-vis="citadel" checked /><span id="vis-citadel">Цитадель (citadel)</span></label>
+          <label class="check" title="Точки спавна врагов — откуда появляются"><input type="checkbox" data-vis="spawn" checked /><span id="vis-spawn">Спавн врагов (spawn)</span></label>
+        </div>
+
+        <!-- CAMERA -->
+        <div class="sec">
+          <div class="sec-title" id="sec-cam">
+            <span style="flex:1">камера игры</span>
+            <button onclick="document.getElementById('cam-help').classList.toggle('open')" title="Справка по настройке камеры — правила bounds, scroll, стартовой позиции" style="background:none;border:1px solid var(--border-rune);color:var(--head);border-radius:2px;width:18px;height:16px;font-size:9px;cursor:pointer;padding:0;flex-shrink:0">?</button>
+          </div>
+
+          <div id="cam-help" class="help-block">
+            <h4>? Как настроить камеру</h4>
+            <div class="rule"><b>Fit [F]</b> — вписать карту в экран. Нажми при старте чтобы видеть всю карту.</div>
+            <div class="rule"><b>Режим игры</b> — включает игровой зум, рельсы и реальные границы камеры в редакторе.</div>
+            <div class="rule"><b>Bounds = scroll-координаты.</b> Смотри <code>[CAM] scroll: X, Y</code> в диагностике игры — это и есть нужные значения.</div>
+            <div class="rule"><b>ISO clamp</b> — ВЫКЛЮЧАТЬ при road-режиме, иначе камера упрётся до конца дороги.</div>
+            <div class="rule"><b>ромб-карта:</b> boundsMaxX ставь ~150px меньше крайнего scroll — viewport выходит за углы ромба.</div>
+            <div class="rule" style="color:var(--warn)"><b>? Важно:</b> игра читает только <code>active-map.json</code>. Нажми «Активировать» после изменений!</div>
+            <div class="optimal">
+              Оптимум (70?30, road east):<br>
+              zoom <b>1.948</b> · minX <b>400</b> · maxX <b>1950</b> · minY <b>30</b> · maxY <b>1050</b><br>
+              startX <b>1024</b> · startY <b>200</b>
+            </div>
+            <div class="optimal" style="margin-top:5px;padding-top:5px;border-top:1px solid var(--border)">
+              Проблемы:<br>
+              • Упирается рано > ISO clamp выключи<br>
+              • Пустота справа > уменьши boundsMaxX<br>
+              • Не двигается влево > boundsMinX ? 400<br>
+              • Дорога не по центру > используй "Смещение дороги Y (px)" ниже
+            </div>
+          </div>
+
+          <label class="field" title="зум игровой камеры. 1.948 = оптимум для карты 70?30 при 1280?720. vis = 657?260 мир.пикс">
+            <span id="lbl-game-zoom">зум игры <span style="color:var(--accent-hi);font-size:9px">(оптимум: 1.948)</span></span>
+            <input id="game-zoom" class="inp" type="number" value="1.948" step="0.01" min="0.1" max="8" placeholder="1.948" />
+          </label>
+          <div class="hint">vis = <b id="vis-hint">657?260</b> мир.пикс при текущем зуме игры</div>
+
+          <button id="btn-use-editor-zoom" class="btn" title="Скопировать текущий зум редактора как зум игры — полезно если нашёл хороший зум вручную">Взять зум редактора как зум игры</button>
+
+          <div class="sec-title" style="font-size:9px;color:var(--soft);margin-top:6px">Панель игры</div>
+          <div id="game-panel" class="game-panel" style="display:none"></div>
+
+          <div id="cam-start-block" style="display:none">
+            <div class="sec-title" style="font-size:9px;color:var(--soft);margin-top:2px">Стартовая позиция камеры</div>
+            <div class="hint">Координаты в game-space. Используй Game View [G] для выбора.</div>
+            <div class="row2">
+              <label class="field" title="Стартовая X камеры (game-space, обычно 1000–2000). Пример: 1024">
+                <span id="lbl-start-x">Старт X</span>
+                <input id="cam-start-x" class="inp" type="number" value="0" placeholder="1024" />
+              </label>
+              <label class="field" title="Стартовая Y камеры (game-space). Пример: 200">
+                <span id="lbl-start-y">Старт Y</span>
+                <input id="cam-start-y" class="inp" type="number" value="0" placeholder="200" />
+              </label>
+            </div>
+            <div class="row2">
+              <button id="btn-cam-from-view" class="btn" title="Записать текущую позицию редактора как стартовую позицию игровой камеры (конвертирует в game-space автоматически)">Взять текущий вид</button>
+              <button id="btn-cam-apply-start" class="btn" title="Переместить редактор к стартовой позиции игровой камеры">> Перейти к старту</button>
+            </div>
+          </div>
+
+          <div class="sec-title" style="font-size:9px;color:var(--soft);margin-top:2px">Границы камеры (Bounds)</div>
+          <div class="hint">Bounds = пределы прокрутки. Значения = то что видишь в <b>[CAM] scroll: X,Y</b> диагностики игры.</div>
+          <label class="field" title="Дополнительный отступ в мир.пикс от края карты. 0 = вплотную к краю">
+            <span id="lbl-bounds-pad">Отступ (pad, px)</span>
+            <input id="bounds-pad" class="inp" type="number" value="0" min="0" max="600" />
+          </label>
+          <label class="check" title="Включить ручные bounds. Значения в game-space — те же числа что в [CAM] scroll диагностики."><input type="checkbox" id="bounds-custom" /><span id="lbl-bounds-custom">Custom bounds (ручные)</span></label>
+          <div id="bounds-inputs" style="display:none">
+            <div class="row2" style="gap:4px;margin-bottom:2px">
+              <label class="field" style="flex:1" title="Минимальный scroll X камеры (левый упор). Game-space.">
+                <span style="font-size:9px">Min X</span>
+                <input id="bounds-minx" class="inp" type="number" step="1" />
+              </label>
+              <label class="field" style="flex:1" title="Максимальный scroll X камеры (правый упор). Game-space.">
+                <span style="font-size:9px">Max X</span>
+                <input id="bounds-maxx" class="inp" type="number" step="1" />
+              </label>
+            </div>
+            <div class="row2" style="gap:4px">
+              <label class="field" style="flex:1" title="Минимальный scroll Y камеры (верхний упор).">
+                <span style="font-size:9px">Min Y</span>
+                <input id="bounds-miny" class="inp" type="number" step="1" />
+              </label>
+              <label class="field" style="flex:1" title="Максимальный scroll Y камеры (нижний упор).">
+                <span style="font-size:9px">Max Y</span>
+                <input id="bounds-maxy" class="inp" type="number" step="1" />
+              </label>
+            </div>
+          </div>
+          <label class="check" title="ISO clamp — зажать камеру по ромбу карты. ВЫКЛЮЧАТЬ при road-режиме — камера упрётся раньше срока!"><input type="checkbox" id="iso-clamp" /><span id="lbl-iso-clamp">ISO clamp (? выключи для road)</span></label>
+          <div class="row2">
+            <button id="btn-bounds-edit" class="btn" title="Тянуть рамку bounds на canvas">? Редактировать</button>
+            <button id="btn-bounds-clear" class="btn" title="Вычислить bounds по краям карты автоматически">? По карте</button>
+          </div>
+
+          <label class="field" title="Смещение дороги в rail-режиме. Плюс = дорога выше на экране, минус = ниже. Значение в world px.">
+            <span id="lbl-road-offset">Смещение дороги Y (px)</span>
+            <input id="road-offset-y" class="inp" type="number" value="0" step="1" />
+          </label>
+          <div class="row2" style="gap:4px">
+            <button id="btn-road-offset-up" class="btn" title="Поднять дорогу в кадре (увеличить offset)">^ Выше</button>
+            <button id="btn-road-offset-down" class="btn" title="Опустить дорогу в кадре (уменьшить offset)">Ў Ниже</button>
+          </div>
+          <div class="hint" style="font-size:9px">Game mode: [ / ], стрелки ^/v, Shift + колесо</div>
+
+          <div class="sec-title" style="font-size:9px;color:var(--soft);margin-top:2px">Режим движения камеры</div>
+          <label class="field" title="road-both — камера следует по дороге в обоих направлениях (основной режим). free — свободное движение.">
+            <span id="lbl-move-mode">Режим движения</span>
+            <select id="cam-move-mode" class="sel">
+              <option value="free">Свободно (free)</option>
+              <option value="road-both" selected>По дороге — обе стороны</option>
+              <option value="road-forward">По дороге — вперёд</option>
+              <option value="road-backward">По дороге — назад</option>
+            </select>
+          </label>
+          <label class="field" title="Направление главной дороги карты. east = дорога идёт вправо-вниз (текущая карта). Враги идут С портала К цитадели.">
+            <span id="lbl-road-dir">Направление дороги</span>
+            <select id="cam-road-dir" class="sel">
+              <option value="east" selected>Восток &gt; (east)</option>
+              <option value="west">Запад &lt; (west)</option>
+              <option value="north">Север ^ (north)</option>
+              <option value="south">Юг v (south)</option>
+            </select>
+          </label>
+
+          <div id="game-view-panel" style="display:none;margin-top:4px;padding:7px 8px;background:#04080f;border:1px solid var(--border-rune);border-radius:2px;">
+            <div style="color:var(--head);font-size:10px;font-weight:bold;margin-bottom:3px;">Game View активен [G]</div>
+            <div style="color:var(--soft);font-size:9px;margin-bottom:5px;line-height:1.4;">Тяните жёлтый прямоугольник по карте.<br>Размер = 657?260 мир.пикс (видимая область игры).</div>
+            <button onclick="setStartFromGameView()" style="width:100%;background:linear-gradient(180deg,#141e10,#0c1408);color:#80aa60;border:1px solid #3a5a2a;border-radius:2px;padding:4px 0;font-size:10px;cursor:pointer;">Задать старт из Game View</button>
+          </div>
+        </div>
+
+        <!-- DIAGNOSTICS -->
+        <div class="sec"><div class="sec-title" id="sec-dbg">Диагностика редактора</div><div id="stats" class="stats"></div></div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Pre-save camera checklist modal -->
+  <div id="presave-overlay">
+    <div id="presave-box">
+      <h3>? Проверка камеры перед сохранением</h3>
+      <div class="presave-items" id="presave-items"></div>
+      <div class="presave-note">
+        <strong>? После сохранения Нажми «Активировать»</strong>
+        Игра читает только <code style="background:#0a1020;padding:1px 3px;color:#90c870">active-map.json</code>. Без «Активировать» изменения не применятся в игре!
+      </div>
+      <div class="presave-btns">
+        <button class="btn btn-accent" onclick="confirmSaveMap()">? Сохранить</button>
+        <button class="btn" onclick="document.getElementById('presave-overlay').classList.remove('open')">? Отмена</button>
+      </div>
+    </div>
+  </div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

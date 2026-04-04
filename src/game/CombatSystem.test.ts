@@ -1,6 +1,15 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CombatSystem } from './CombatSystem';
-import type { GameState, Unit, UnitDef } from './game.types';
+import type { Building, GameState, Unit, UnitDef } from './game.types';
+import type { BlockchainService } from '../blockchain/BlockchainService';
+
+vi.mock('../wallet/WalletService', () => ({
+  getCurrentState: vi.fn(() => ({
+    connected: true,
+    publicKey: '11111111111111111111111111111111',
+    walletType: 'phantom',
+  })),
+}));
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -19,6 +28,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     playerBaseHp: 300,
     playerBaseMaxHp: 300,
     resources: 0,
+    crystals: 0,
+    lastVikingRecruitAtMs: 0,
     nextId: 1,
     pathNodes: [
       { wx: 0, wy: 0 },
@@ -66,6 +77,7 @@ const RANGED_ENEMY_DEF: UnitDef = {
   attackRate: 0.8,
   sprite: 'enemy',
   faction: 'enemy',
+  attackRange: 150,
 };
 
 function makeUnit(id: number, def: UnitDef, wx: number, wy: number): Unit {
@@ -81,6 +93,25 @@ function makeUnit(id: number, def: UnitDef, wx: number, wy: number): Unit {
     state: 'moving',
     fightingWith: null,
     attackCooldown: 0,
+  };
+}
+
+function makeBuilding(id: number, wx: number, wy: number, hp = 60): Building {
+  return {
+    id,
+    type: 'attack',
+    wx,
+    wy,
+    tileCol: 0,
+    tileRow: 0,
+    radius: 160,
+    damage: 30,
+    attackRate: 1,
+    attackCooldown: 0,
+    buffValue: 0,
+    resourceRate: 5,
+    hp,
+    maxHp: hp,
   };
 }
 
@@ -107,10 +138,10 @@ describe('CombatSystem', () => {
     expect(state.units[1].fightingWith).toBe(1);
   });
 
-  // Test 2: Units beyond 32 units do NOT enter fighting state
-  it('does NOT set fighting when enemy and ally are more than 32 units apart', () => {
+  // Test 2: Units beyond nearest-pull range do NOT enter fighting state
+  it('does NOT set fighting when enemy and ally are well beyond melee pull range', () => {
     const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
-    const ally = makeUnit(2, LIGHT_ALLY_DEF, 50, 0); // 50 units — beyond 32
+    const ally = makeUnit(2, LIGHT_ALLY_DEF, 72, 0); // beyond 60 pull radius
     const state = makeState({ units: [enemy, ally] });
 
     combat.update(0.016, state);
@@ -119,8 +150,8 @@ describe('CombatSystem', () => {
     expect(state.units[1].state).toBe('moving');
   });
 
-  // Test 3: Fighting units deal damage to each other on cooldown expiry
-  it('deals damage from ally to enemy (and vice versa) when attackCooldown reaches 0', () => {
+  // Test 3: Fighting units wind up first, then land damage on the strike frame
+  it('delays melee damage until the attack swing reaches the hit frame', () => {
     const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
     const ally = makeUnit(2, LIGHT_ALLY_DEF, 10, 0);
     enemy.state = 'fighting';
@@ -136,13 +167,20 @@ describe('CombatSystem', () => {
 
     combat.update(0.016, state);
 
+    expect(state.units[0].hp).toBe(enemyHpBefore);
+    expect(state.units[1].hp).toBe(allyHpBefore);
+    expect(state.units[0].attackWindup).toBeGreaterThan(0);
+    expect(state.units[1].attackWindup).toBeGreaterThan(0);
+
+    combat.update(0.25, state);
+
     // Enemy attacked ally (damage=8), ally attacked enemy (damage=10)
     expect(state.units[0].hp).toBe(enemyHpBefore - LIGHT_ALLY_DEF.damage);
     expect(state.units[1].hp).toBe(allyHpBefore - LIGHT_ENEMY_DEF.damage);
   });
 
-  // Test 4: attackCooldown resets after attack
-  it('resets attackCooldown to 1/attackRate after dealing damage', () => {
+  // Test 4: attackCooldown resets after the swing has fully completed
+  it('resets attackCooldown after the attack animation finishes', () => {
     const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
     const ally = makeUnit(2, LIGHT_ALLY_DEF, 10, 0);
     enemy.state = 'fighting';
@@ -155,16 +193,16 @@ describe('CombatSystem', () => {
     const state = makeState({ units: [enemy, ally] });
 
     combat.update(0.016, state);
+    combat.update(0.5, state);
 
-    // After attack: cooldown = 1/attackRate - dt (decremented once this frame)
-    const expectedEnemyCooldown = 1 / LIGHT_ENEMY_DEF.attackRate - 0.016;
-    const expectedAllyCooldown = 1 / LIGHT_ALLY_DEF.attackRate - 0.016;
-    expect(state.units[0].attackCooldown).toBeCloseTo(expectedEnemyCooldown, 5);
-    expect(state.units[1].attackCooldown).toBeCloseTo(expectedAllyCooldown, 5);
+    expect(state.units[0].attackCooldown).toBeCloseTo(1 / LIGHT_ENEMY_DEF.attackRate, 5);
+    expect(state.units[1].attackCooldown).toBeCloseTo(1 / LIGHT_ALLY_DEF.attackRate, 5);
+    expect(state.units[0].attackWindup).toBeUndefined();
+    expect(state.units[1].attackWindup).toBeUndefined();
   });
 
-  // Test 5: Kill awards resources via registerKill
-  it('awards resources when enemy unit hp reaches 0 (registerKill called)', () => {
+  // Test 5: Kill awards crystals via registerKill
+  it('awards crystals when enemy unit hp reaches 0 (registerKill called)', () => {
     const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
     const ally = makeUnit(2, LIGHT_ALLY_DEF, 10, 0);
     enemy.state = 'fighting';
@@ -175,12 +213,13 @@ describe('CombatSystem', () => {
     ally.fightingWith = 1;
     ally.attackCooldown = 0;
 
-    const state = makeState({ units: [enemy, ally], resources: 0 });
+    const state = makeState({ units: [enemy, ally], resources: 0, crystals: 0 });
 
     combat.update(0.016, state);
+    combat.update(0.3, state);
 
-    // light-enemy kill drop = 5 electrolatov
-    expect(state.resources).toBe(5);
+    expect(state.resources).toBe(0);
+    expect(state.crystals).toBe(5);
   });
 
   // Test 6: Winner resumes moving after opponent dies
@@ -215,6 +254,10 @@ describe('CombatSystem', () => {
 
     combat.update(0.016, state);
 
+    expect(state.citadelHp).toBe(500);
+
+    combat.update(0.3, state);
+
     // enemy damage=8 applied to citadel
     expect(state.citadelHp).toBe(500 - LIGHT_ENEMY_DEF.damage);
   });
@@ -228,6 +271,7 @@ describe('CombatSystem', () => {
     const state = makeState({ units: [enemy], citadelHp: 1 }); // one hit kills
 
     combat.update(0.016, state);
+    combat.update(0.3, state);
 
     expect(state.citadelHp).toBe(0);
     expect(state.phase).toBe('lost');
@@ -273,8 +317,8 @@ describe('CombatSystem', () => {
     expect(state.playerBaseHp).toBe(300); // untouched
   });
 
-  // Test 12: Heavy enemy kill awards correct drop (15 electrolatov)
-  it('awards 15 electrolatov when heavy-enemy is killed', () => {
+  // Test 12: Heavy enemy kill awards correct drop (15 crystals)
+  it('awards 15 crystals when heavy-enemy is killed', () => {
     const heavy = makeUnit(1, HEAVY_ENEMY_DEF, 0, 0);
     const ally = makeUnit(2, { ...LIGHT_ALLY_DEF, damage: 200 }, 10, 0); // big damage to kill in one hit
     heavy.state = 'fighting';
@@ -285,11 +329,13 @@ describe('CombatSystem', () => {
     ally.fightingWith = 1;
     ally.attackCooldown = 0;
 
-    const state = makeState({ units: [heavy, ally], resources: 0 });
+    const state = makeState({ units: [heavy, ally], resources: 0, crystals: 0 });
 
     combat.update(0.016, state);
+    combat.update(0.3, state);
 
-    expect(state.resources).toBe(15);
+    expect(state.resources).toBe(0);
+    expect(state.crystals).toBe(15);
   });
 
   // Test 13: registerKill defKey uses role + '-enemy' for enemy units
@@ -304,11 +350,180 @@ describe('CombatSystem', () => {
     ally.fightingWith = 1;
     ally.attackCooldown = 0;
 
-    const state = makeState({ units: [ranged, ally], resources: 0 });
+    const state = makeState({ units: [ranged, ally], resources: 0, crystals: 0 });
+
+    combat.update(0.016, state);
+    combat.update(0.3, state);
+
+    expect(state.resources).toBe(0);
+    expect(state.crystals).toBe(10);
+  });
+
+  it('does not lock collectors into melee collisions', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const collector = makeUnit(2, {
+      role: 'collector',
+      hp: 30,
+      speed: 120,
+      damage: 0,
+      attackRate: 0,
+      sprite: 'collector',
+      faction: 'ally',
+    }, 10, 0);
+    const state = makeState({ units: [enemy, collector] });
 
     combat.update(0.016, state);
 
-    // ranged-enemy kill drop = 10 electrolatov
-    expect(state.resources).toBe(10);
+    expect(state.units[0].state).toBe('moving');
+    expect(state.units[1].state).toBe('moving');
+  });
+
+  it('lets collectors survive much longer while their guard field is active', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const collector = makeUnit(2, {
+      role: 'collector',
+      hp: 30,
+      speed: 120,
+      damage: 0,
+      attackRate: 0,
+      sprite: 'collector',
+      faction: 'ally',
+    }, 10, 0);
+    enemy.state = 'fighting';
+    enemy.fightingWith = 2;
+    enemy.attackCooldown = 0;
+    collector.state = 'moving';
+    collector.collectorShield = 15;
+    const state = makeState({ units: [enemy, collector] });
+
+    combat.update(0.016, state);
+    combat.update(0.3, state);
+
+    expect(state.units[1].hp).toBeCloseTo(28.24, 2);
+  });
+
+  it('sets both units to fighting state without snapping positions', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const ally = makeUnit(2, LIGHT_ALLY_DEF, 20, 12);
+    const state = makeState({ units: [enemy, ally] });
+
+    combat.update(0.016, state);
+
+    expect(state.units[0].state).toBe('fighting');
+    expect(state.units[1].state).toBe('fighting');
+    // no snap/teleport — only a tiny approach step is allowed
+    expect(state.units[0].wx).toBeLessThan(2);
+    expect(state.units[1].wx).toBeGreaterThan(18);
+  });
+
+  it('still lets the nearest melee ally engage first across neighboring lanes', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const closeAlly = makeUnit(2, LIGHT_ALLY_DEF, 46, 18);
+    const farAlly = makeUnit(3, LIGHT_ALLY_DEF, 59, 0);
+    const state = makeState({ units: [enemy, closeAlly, farAlly] });
+
+    combat.update(0.016, state);
+
+    expect(enemy.state).toBe('fighting');
+    expect([2, 3]).toContain(enemy.fightingWith);
+    expect(closeAlly.state).toBe('fighting');
+    expect(closeAlly.fightingWith).toBe(1);
+    expect(Math.hypot(enemy.wx - closeAlly.wx, enemy.wy - closeAlly.wy)).toBeLessThan(60);
+    expect(['moving', 'fighting']).toContain(farAlly.state);
+  });
+
+  it('allows multiple allies to focus the same nearby enemy', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const allyA = makeUnit(2, LIGHT_ALLY_DEF, 22, -4);
+    const allyB = makeUnit(3, LIGHT_ALLY_DEF, 28, 9);
+    const state = makeState({ units: [enemy, allyA, allyB] });
+
+    combat.update(0.016, state);
+
+    expect(enemy.state).toBe('fighting');
+    expect([2, 3]).toContain(enemy.fightingWith);
+    expect(allyA.state).toBe('fighting');
+    expect(allyA.fightingWith).toBe(1);
+    expect(allyB.state).toBe('fighting');
+    expect(allyB.fightingWith).toBe(1);
+  });
+
+  it('allows multiple enemies to collapse onto the same ally', () => {
+    const enemyA = makeUnit(1, LIGHT_ENEMY_DEF, -18, -4);
+    const enemyB = makeUnit(2, LIGHT_ENEMY_DEF, -24, 11);
+    const ally = makeUnit(3, LIGHT_ALLY_DEF, 0, 0);
+    const state = makeState({ units: [enemyA, enemyB, ally] });
+
+    combat.update(0.016, state);
+
+    expect(ally.state).toBe('fighting');
+    expect([1, 2]).toContain(ally.fightingWith);
+    expect(enemyA.state).toBe('fighting');
+    expect(enemyA.fightingWith).toBe(3);
+    expect(enemyB.state).toBe('fighting');
+    expect(enemyB.fightingWith).toBe(3);
+  });
+
+  it('lets melee enemies attack towers when they reach them', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 8, 0);
+    const tower = makeBuilding(7, 0, 0, 20);
+    const state = makeState({ units: [enemy], buildings: [tower] });
+
+    combat.update(0.016, state);
+    combat.update(0.3, state);
+
+    expect(state.units[0].state).toBe('fighting');
+    expect(state.units[0].fightingWith).toBe(-7);
+    expect(state.buildings[0].hp).toBeLessThan(20);
+  });
+
+  it('calls recordKill on blockchainService when an enemy dies', () => {
+    const recordKill = vi.fn(async () => undefined);
+    const blockchainService = { recordKill } as unknown as BlockchainService;
+    combat.setBlockchainService(blockchainService);
+
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const ally = makeUnit(2, { ...LIGHT_ALLY_DEF, damage: 200 }, 10, 0);
+    enemy.state = 'fighting';
+    enemy.fightingWith = 2;
+    enemy.hp = 1;
+    enemy.attackCooldown = 99;
+    ally.state = 'fighting';
+    ally.fightingWith = 1;
+    ally.attackCooldown = 0;
+
+    const state = makeState({ units: [enemy, ally] });
+
+    combat.update(0.016, state);
+    combat.update(0.3, state);
+
+    expect(recordKill).toHaveBeenCalledWith(
+      'light-enemy',
+      '11111111111111111111111111111111',
+    );
+  });
+
+  it('lets allies engage nearby lasers even after the ranged unit has started firing', () => {
+    const ranged = makeUnit(1, RANGED_ENEMY_DEF, 0, 0);
+    const ally = makeUnit(2, LIGHT_ALLY_DEF, 26, 6);
+    ranged.state = 'fighting';
+    ranged.fightingWith = 999;
+    ranged.attackCooldown = 0.4;
+    const state = makeState({ units: [ranged, ally] });
+
+    combat.update(0.016, state);
+
+    expect(ally.state).toBe('fighting');
+    expect(ally.fightingWith).toBe(1);
+    expect(ranged.state).toBe('fighting');
+    expect(ranged.fightingWith).toBe(2);
+  });
+
+  it('does not throw when blockchainService is not set', () => {
+    const enemy = makeUnit(1, LIGHT_ENEMY_DEF, 0, 0);
+    const ally = makeUnit(2, LIGHT_ALLY_DEF, 10, 0);
+    const state = makeState({ units: [enemy, ally] });
+
+    expect(() => combat.update(0.016, state)).not.toThrow();
   });
 });

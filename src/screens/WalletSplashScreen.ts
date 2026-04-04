@@ -1,7 +1,8 @@
 // src/screens/WalletSplashScreen.ts
 import type { ScreenModule } from './ScreenManager';
 import type { ScreenManager } from './ScreenManager';
-import { getProvider, connectWallet } from '../wallet/WalletService';
+import { connectWallet } from '../wallet/WalletService';
+import { t } from '../i18n/localization';
 
 const STYLE_ID = 'vk-wallet-splash-style';
 
@@ -31,24 +32,13 @@ export class WalletSplashScreen implements ScreenModule {
   }
 
   private buildHTML(): string {
-    const phantomInstalled = getProvider('phantom') !== null;
-    const backpackInstalled = getProvider('backpack') !== null;
-
-    const phantomBtn = phantomInstalled
-      ? `<button id="btn-phantom" class="vk-wallet-btn">Connect Phantom</button>`
-      : `<a href="https://phantom.app/" target="_blank" rel="noopener" class="vk-wallet-btn vk-wallet-install">Install Phantom</a>`;
-
-    const backpackBtn = backpackInstalled
-      ? `<button id="btn-backpack" class="vk-wallet-btn">Connect Backpack</button>`
-      : `<a href="https://backpack.app/" target="_blank" rel="noopener" class="vk-wallet-btn vk-wallet-install">Install Backpack</a>`;
-
     return `
       <div class="vk-splash-inner">
         <h1 class="vk-splash-title">VALKYRIX</h1>
-        <p class="vk-splash-subtitle">Connect your wallet to play</p>
+        <p class="vk-splash-subtitle">${t('wallet.connectTitle')}</p>
         <div class="vk-wallet-buttons">
-          ${phantomBtn}
-          ${backpackBtn}
+          <button id="btn-phantom" class="vk-wallet-btn">${t('wallet.connectPhantom')}</button>
+          <button id="btn-backpack" class="vk-wallet-btn">${t('wallet.connectBackpack')}</button>
         </div>
         <p class="vk-gas-notice">Each kill records a Solana transaction — you pay gas from your wallet.</p>
         <p id="vk-wallet-error" class="vk-wallet-error" style="display:none"></p>
@@ -63,15 +53,15 @@ export class WalletSplashScreen implements ScreenModule {
 
     const handleConnect = async (type: 'phantom' | 'backpack', btn: HTMLButtonElement) => {
       btn.disabled = true;
-      btn.textContent = 'Connecting...';
+      btn.textContent = t('wallet.connecting');
       try {
         await connectWallet(type);
         this.manager.navigateTo('menu');
       } catch (err) {
         btn.disabled = false;
-        btn.textContent = type === 'phantom' ? 'Connect Phantom' : 'Connect Backpack';
+        btn.textContent = type === 'phantom' ? t('wallet.connectPhantom') : t('wallet.connectBackpack');
         if (errorEl) {
-          errorEl.textContent = err instanceof Error ? err.message : 'Connection failed';
+          errorEl.textContent = err instanceof Error ? err.message : t('wallet.connectFailed');
           errorEl.style.display = 'block';
         }
       }

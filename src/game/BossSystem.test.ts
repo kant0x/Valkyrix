@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BossSystem } from './BossSystem';
+import { BossSystem, BOSS_TRIGGER_SECONDS } from './BossSystem';
 import type { GameState } from './game.types';
+import type { BlockchainService } from '../blockchain/BlockchainService';
 
 vi.mock('../screens/NegotiationOverlay', () => {
   class MockNegotiationOverlay {
@@ -9,6 +10,14 @@ vi.mock('../screens/NegotiationOverlay', () => {
   }
   return { NegotiationOverlay: MockNegotiationOverlay };
 });
+
+vi.mock('../wallet/WalletService', () => ({
+  getCurrentState: vi.fn(() => ({
+    connected: true,
+    publicKey: '11111111111111111111111111111111',
+    walletType: 'phantom',
+  })),
+}));
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
@@ -47,35 +56,35 @@ describe('BossSystem', () => {
   // 1. timer trigger
   // -------------------------------------------------------------------------
   describe('timer trigger', () => {
-    it('does not trigger when elapsed < 10', () => {
+    it('does not trigger when elapsed < BOSS_TRIGGER_SECONDS', () => {
       state.elapsed = 0;
-      system.update(9, state, null);
+      system.update(BOSS_TRIGGER_SECONDS - 1, state, null);
       expect(state.phase).toBe('playing');
       expect(state.bossNegotiation).toBeUndefined();
     });
 
-    it('does not trigger at exactly 9.9s', () => {
+    it('does not trigger just below threshold', () => {
       state.elapsed = 0;
-      system.update(9.9, state, null);
+      system.update(BOSS_TRIGGER_SECONDS - 0.1, state, null);
       expect(state.phase).toBe('playing');
     });
 
-    it('triggers negotiation when elapsed reaches 10s', () => {
+    it('triggers negotiation when elapsed reaches BOSS_TRIGGER_SECONDS', () => {
       state.elapsed = 0;
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.phase).toBe('negotiation');
       expect(state.bossNegotiation?.active).toBe(true);
       expect(state.bossNegotiation?.triggered).toBe(true);
     });
 
-    it('triggers when elapsed exceeds 10s (multi-tick accumulation)', () => {
-      state.elapsed = 9;
-      system.update(2, state, null); // 9 + 2 = 11
+    it('triggers when elapsed exceeds threshold (multi-tick accumulation)', () => {
+      state.elapsed = BOSS_TRIGGER_SECONDS - 1;
+      system.update(2, state, null);
       expect(state.phase).toBe('negotiation');
     });
 
     it('does not re-trigger when bossNegotiation.triggered is already true', () => {
-      state.elapsed = 5;
+      state.elapsed = BOSS_TRIGGER_SECONDS - 5;
       state.bossNegotiation = { active: false, triggered: true };
       system.update(6, state, null);
       expect(state.units.length).toBe(0);
@@ -83,9 +92,9 @@ describe('BossSystem', () => {
     });
 
     it('accumulates elapsed on state', () => {
-      state.elapsed = 10;
+      state.elapsed = BOSS_TRIGGER_SECONDS;
       system.update(5, state, null);
-      expect(state.elapsed).toBe(15);
+      expect(state.elapsed).toBe(BOSS_TRIGGER_SECONDS + 5);
     });
   });
 
@@ -99,52 +108,52 @@ describe('BossSystem', () => {
     });
 
     it('pushes boss unit to state.units on trigger', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units.length).toBe(1);
     });
 
     it('boss unit has def.role === boss', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units[0].def.role).toBe('boss');
     });
 
     it('boss unit has def.hp === 500', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units[0].def.hp).toBe(500);
     });
 
     it('boss unit has faction === enemy', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units[0].faction).toBe('enemy');
     });
 
     it('boss unit def is a spread copy — not a reference to UNIT_DEFS', async () => {
       const { UNIT_DEFS } = await import('./game.types');
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units[0].def).not.toBe(UNIT_DEFS['boss-enemy']);
     });
 
     it('boss unit id comes from state.nextId', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units[0].id).toBe(42);
       expect(state.nextId).toBe(43);
     });
 
     it('boss unit positioned at pathNodes[0]', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units[0].wx).toBe(100);
       expect(state.units[0].wy).toBe(100);
     });
 
-    it('second update at elapsed >= 10 does NOT spawn second boss', () => {
-      system.update(10, state, null);
+    it('second update at elapsed >= BOSS_TRIGGER_SECONDS does NOT spawn second boss', () => {
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.units.length).toBe(1);
       system.update(1, state, null);
       expect(state.units.length).toBe(1);
     });
 
     it('bossNegotiation after trigger has scale=0 and attemptsLeft=3', () => {
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       expect(state.bossNegotiation?.scale).toBe(0);
       expect(state.bossNegotiation?.attemptsLeft).toBe(3);
     });
@@ -157,7 +166,7 @@ describe('BossSystem', () => {
     beforeEach(() => {
       // Trigger boss first
       state.elapsed = 0;
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
       // Now in negotiation
     });
 
@@ -202,6 +211,18 @@ describe('BossSystem', () => {
       system.handleSuccess(state);
       expect(state.waveTimer).toBeGreaterThanOrEqual(20);
     });
+
+    it('records boss outcome on blockchain when negotiation succeeds', () => {
+      const recordBossOutcome = vi.fn(async () => undefined);
+      system.setBlockchainService({ recordBossOutcome } as unknown as BlockchainService);
+
+      system.handleSuccess(state);
+
+      expect(recordBossOutcome).toHaveBeenCalledWith(
+        'negotiated',
+        '11111111111111111111111111111111',
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -210,7 +231,7 @@ describe('BossSystem', () => {
   describe('handleFailure', () => {
     beforeEach(() => {
       state.elapsed = 0;
-      system.update(10, state, null);
+      system.update(BOSS_TRIGGER_SECONDS, state, null);
     });
 
     it('enrages the boss unit (def.enraged = true)', () => {
@@ -226,16 +247,16 @@ describe('BossSystem', () => {
       expect(boss.def.damage).toBe(Math.round(originalDamage * 1.5));
     });
 
-    it('enqueues heavy-enemy x8 in spawnQueue', () => {
+    it('enqueues heavy-enemy x5 in spawnQueue', () => {
       system.handleFailure(state);
       const heavyCount = state.spawnQueue.filter(e => e.defKey === 'heavy-enemy').length;
-      expect(heavyCount).toBe(8);
+      expect(heavyCount).toBe(5);
     });
 
-    it('enqueues ranged-enemy x6 in spawnQueue', () => {
+    it('enqueues ranged-enemy x4 in spawnQueue', () => {
       system.handleFailure(state);
       const rangedCount = state.spawnQueue.filter(e => e.defKey === 'ranged-enemy').length;
-      expect(rangedCount).toBe(6);
+      expect(rangedCount).toBe(4);
     });
 
     it('does NOT enqueue any light-enemy', () => {
@@ -244,9 +265,9 @@ describe('BossSystem', () => {
       expect(lightCount).toBe(0);
     });
 
-    it('total horde is 14 entries (8 heavy + 6 ranged)', () => {
+    it('total horde is 9 entries (5 heavy + 4 ranged)', () => {
       system.handleFailure(state);
-      expect(state.spawnQueue.length).toBe(14);
+      expect(state.spawnQueue.length).toBe(9);
     });
 
     it('horde delays start at 1.0s', () => {
@@ -274,6 +295,15 @@ describe('BossSystem', () => {
       system.handleFailure(state);
       const boss = state.units.find(u => u.def.role === 'boss' && u.faction === 'enemy');
       expect(boss).toBeDefined();
+    });
+
+    it('does not record a boss outcome tx on negotiation failure', () => {
+      const recordBossOutcome = vi.fn(async () => undefined);
+      system.setBlockchainService({ recordBossOutcome } as unknown as BlockchainService);
+
+      system.handleFailure(state);
+
+      expect(recordBossOutcome).not.toHaveBeenCalled();
     });
   });
 
@@ -311,7 +341,7 @@ describe('BossSystem', () => {
     it('unmounts overlay when forceReset called after trigger', () => {
       state.elapsed = 0;
       const container = { appendChild: vi.fn() } as unknown as HTMLElement;
-      system.update(10, state, container);
+      system.update(BOSS_TRIGGER_SECONDS, state, container);
       expect(() => system.forceReset(state)).not.toThrow();
     });
   });

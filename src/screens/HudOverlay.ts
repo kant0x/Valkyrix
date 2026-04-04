@@ -1,28 +1,21 @@
-/**
- * HudOverlay — Full Game HUD (Canvas-rendered)
- * All slots are drawn from day 1. Unavailable features show as LOCKED.
- * Activation: flip a flag when backend system is ready.
- */
+import { getLanguage, t } from '../i18n/localization';
 
 const STYLE_ID = 'vk-hud-style';
 const OVERLAY_ID = 'vk-win-loss-overlay';
-const CITADEL_ICON_SRC = '/assets/build/citadel/citadel.png';
-const ATTACK_ICON_SRC = '/assets/build/port/port.png';
-const BUFF_ICON_SRC = '/assets/build/citadel/citadel.png';
-const ENERGY_ICON_SRC = '/assets/pers/collector/resource collection/split/collect_06.png';
-const LIGHT_UNIT_ICON_SRC = '/assets/pers/viking/rotations/south.png';
-const COLLECTOR_UNIT_ICON_SRC = '/assets/pers/collector/direction/south.png';
-const HEAVY_UNIT_ICON_SRC = '/assets/pers/viking/rotations/east.png';
-const RANGED_UNIT_ICON_SRC = '/assets/pers/viking/rotations/north.png';
 
-type BuildAction = 'attack' | 'buff';
-type CommandCallbacks = {
+export type BuildAction = 'attack' | 'buff' | 'sell';
+export type CommandCallbacks = {
   attack?: () => void;
   buff?: () => void;
+  sell?: () => void;
   stagedUnitA?: () => void;
   stagedUnitB?: () => void;
   stagedUnitC?: () => void;
   stagedUnitD?: () => void;
+  supportA?: () => void;
+  supportB?: () => void;
+  supportC?: () => void;
+  supportD?: () => void;
 };
 
 export interface HudState {
@@ -35,685 +28,662 @@ export interface HudState {
   message?: string;
   canAffordAttack?: boolean;
   canAffordBuff?: boolean;
-  // Extended fields (activate when ready)
+  canSalvage?: boolean;
+  canAffordViking?: boolean;
+  canAffordCollector?: boolean;
+  canAffordCybernetic?: boolean;
+  cyberneticCooldown?: number;
+  cyberneticSlots?: number;
   waveTimer?: number;
   enemiesAlive?: number;
   enemiesQueued?: number;
   alliesAlive?: number;
   crystals?: number;
+  latfa?: number;
+  schematics?: number;
   towerCount?: number;
   alert?: string;
   enemiesKilled?: number;
   totalDamage?: number;
+  canSupportOverdrive?: boolean;
+  canSupportOrbital?: boolean;
+  canSupportMissile?: boolean;
+  canSupportLance?: boolean;
+  supportOverdriveCooldown?: number;
+  supportOrbitalCooldown?: number;
+  supportMissileCooldown?: number;
+  supportLanceCooldown?: number;
 }
-
-interface RS {
-  wave: string; hp: number; maxHp: number; resources: number;
-  armedAction: BuildAction | null; message: string;
-  attackAvail: boolean; buffAvail: boolean;
-  t: number; hpSmooth: number;
-  // Extended
-  waveTimer: number; enemiesAlive: number; enemiesQueued: number;
-  alliesAlive: number; crystals: number; towerCount: number;
-  alert: string; alertTimer: number;
-  enemiesKilled: number; totalDamage: number;
-}
-
-function mkImg(src: string) { const i = new Image(); i.src = src; return i; }
-
-// ── Color palette (our cold blue) ──
-const C = {
-  accent:     '#4a9ed0',
-  accentL:    '#8cc8f0',
-  accentD:    '#2a6090',
-  text:       '#c0ddf0',
-  textDim:    '#4a7090',
-  textMid:    '#7aadcc',
-  bg1:        '#0c1828',
-  bg2:        '#060e1a',
-  bg3:        '#040a14',
-  border:     'rgba(40,100,200,0.35)',
-  borderL:    'rgba(74,174,255,0.5)',
-  glow:       'rgba(74,174,255,0.08)',
-  locked:     'rgba(74,174,255,0.12)',
-  lockedText: '#2a4a6a',
-  red:        '#ff5a5a',
-  green:      '#5aff8a',
-  yellow:     '#ffd84a',
-};
 
 export class HudOverlay {
   private el: HTMLElement | null = null;
-  private cvs: HTMLCanvasElement | null = null;
-  private ctx: CanvasRenderingContext2D | null = null;
-  private rafId = 0;
   private cbs: CommandCallbacks = {};
-  private resizeObs: ResizeObserver | null = null;
-
-  private imgs = {
-    citadel: mkImg(CITADEL_ICON_SRC), attack: mkImg(ATTACK_ICON_SRC),
-    buff: mkImg(BUFF_ICON_SRC), energy: mkImg(ENERGY_ICON_SRC),
-    unitA: mkImg(LIGHT_UNIT_ICON_SRC), unitB: mkImg(COLLECTOR_UNIT_ICON_SRC),
-    unitC: mkImg(HEAVY_UNIT_ICON_SRC), unitD: mkImg(RANGED_UNIT_ICON_SRC),
+  private s = {
+    hp: 2000,
+    maxHp: 2000,
+    dmg: 0,
+    kills: 0,
+    resources: 0,
+    crystals: 0,
+    latfa: 0,
+    schematics: 0,
+    enemiesAlive: 0,
+    enemiesQueued: 0,
+    alliesAlive: 0,
+    towerCount: 0,
+    armedAction: null as BuildAction | null,
+    alertTimer: null as ReturnType<typeof setTimeout> | null,
+    supportCooldowns: {
+      overdrive: 0,
+      orbital: 0,
+      missile: 0,
+      lance: 0,
+    },
   };
-
-  private s: RS = {
-    wave: '—', hp: 100, maxHp: 100, resources: 0,
-    armedAction: null, message: 'Select a tower, then click a tile.',
-    attackAvail: true, buffAvail: true, t: 0, hpSmooth: 1,
-    waveTimer: 0, enemiesAlive: 0, enemiesQueued: 0,
-    alliesAlive: 0, crystals: -1, towerCount: 0,
-    alert: '', alertTimer: 0, enemiesKilled: 0, totalDamage: 0,
-  };
-
-  // Feature flags — flip to true when backend is ready
-  private features = {
-    crystals: false,      // 💎 second resource
-    berserk: false,       // unit C
-    guard: false,         // unit D
-    towerUpgrade: false,  // tower levels
-    abilities: false,     // active abilities
-    minimap: false,       // minimap canvas
-    stats: false,         // kill/damage counters
-  };
-
-  // ── Public API ──
 
   mount(container: HTMLElement): void {
     this.ensureStyle();
-    const el = document.createElement('div');
-    el.id = 'vk-hud';
-    container.appendChild(el);
-    this.el = el;
+    this.el = document.createElement('div');
+    this.el.id = 'vk-hud';
+    this.el.innerHTML = `
+      <div class="vk-hud-deck" aria-label="${t('hud.citadelOrders')}">
+        <div class="vk-hud-main">
+          <section class="vk-panel-block vk-citadel-block">
+            <div class="vk-citadel-banner"><strong>${t('hud.citadel')}</strong><span>${t('hud.guardData')}</span></div>
+            <div class="vk-citadel-shell">
+              <div class="vk-citadel-art"><img src="/assets/build/citadel/citadel.png" alt="" /></div>
+              <div class="vk-citadel-copy">
+                <div class="vk-panel-kicker">${t('hud.coreGenerator')}</div>
+                <div class="vk-panel-title">${t('hud.anchorCitadel')}</div>
+                <div class="vk-health-readout">
+                  <strong id="vk-hud-health" class="vk-stat-value">2000 / 2000</strong>
+                  <span class="vk-health-state">${t('hud.integrityStable')}</span>
+                </div>
+                <div class="vk-health-track"><div id="vk-hud-health-fill" class="vk-health-fill"></div></div>
+                <div class="vk-mini-grid">
+                  <div class="vk-mini-stat"><span>${t('hud.wave')}</span><strong id="vk-hud-wave">0</strong></div>
+                  <div class="vk-mini-stat"><span>${t('hud.energy')}</span><strong id="vk-hud-resources">0</strong></div>
+                  <div class="vk-mini-stat"><span>${t('hud.crystals')}</span><strong id="vk-hud-crystals">0</strong></div>
+                  <div class="vk-mini-stat"><span>${t('hud.latfa')}</span><strong id="vk-hud-latfa">0</strong></div>
+                  <div class="vk-mini-stat"><span>${t('hud.towers')}</span><strong id="vk-hud-towers">0</strong></div>
+                  <div class="vk-mini-stat"><span>${t('hud.allies')}</span><strong id="vk-hud-allies">0</strong></div>
+                </div>
+                <div id="hud-alert-strip" class="vk-alert-strip">${t('hud.alertDefault')}</div>
+              </div>
+            </div>
+          </section>
 
-    const cvs = document.createElement('canvas');
-    cvs.id = 'vk-hud-canvas';
-    el.appendChild(cvs);
-    this.cvs = cvs;
-    this.ctx = cvs.getContext('2d');
+          <section class="vk-panel-block vk-oracle-block">
+            <div class="vk-oracle-head">
+              <div class="vk-oracle-eye" aria-hidden="true"></div>
+            </div>
+            <div class="vk-support-grid" aria-label="${t('hud.supportMatrix')}">
+              <button id="vk-support-overdrive" class="vk-support-card vk-support-button" type="button">
+                <span class="vk-support-kicker">${t('hud.booster')}</span>
+                <strong class="vk-support-name">${t('support.overdriveName')}</strong>
+                <span class="vk-support-desc">${t('support.overdriveDesc')}</span>
+                <span class="vk-support-cost">${t('support.costs', { value: 2 })}</span>
+                <span id="vk-support-buff-status" class="vk-support-status">${t('support.overdriveStatusReady')}</span>
+              </button>
+              <button id="vk-support-orbital" class="vk-support-card vk-support-button" type="button">
+                <span class="vk-support-kicker">${t('hud.fromOrbit')}</span>
+                <strong class="vk-support-name">${t('support.orbitalName')}</strong>
+                <span class="vk-support-desc">${t('support.orbitalDesc')}</span>
+                <span class="vk-support-cost">${t('support.costs', { value: 6 })}</span>
+                <span id="vk-support-drop-status" class="vk-support-status">${t('support.orbitalStatusNeed')}</span>
+              </button>
+              <button id="vk-support-missile" class="vk-support-card vk-support-button" type="button">
+                <span class="vk-support-kicker">${t('hud.antiSwarm')}</span>
+                <strong class="vk-support-name">${t('support.missileName')}</strong>
+                <span class="vk-support-desc">${t('support.missileDesc')}</span>
+                <span class="vk-support-cost">${t('support.costs', { value: 4 })}</span>
+                <span id="vk-support-rocket-status" class="vk-support-status">${t('support.missileStatusNeed')}</span>
+              </button>
+              <button id="vk-support-lance" class="vk-support-card vk-support-button" type="button">
+                <span class="vk-support-kicker">${t('hud.heavyWeapon')}</span>
+                <strong class="vk-support-name">${t('support.lanceName')}</strong>
+                <span class="vk-support-desc">${t('support.lanceDesc')}</span>
+                <span class="vk-support-cost">${t('support.costs', { value: 5 })}</span>
+                <span id="vk-support-heavy-status" class="vk-support-status">${t('support.lanceStatusNeed')}</span>
+              </button>
+            </div>
+            <div id="vk-hud-command-message" class="vk-deck-message">${t('hud.supportOnline')}</div>
+            <div id="vk-hud-focus-label" class="vk-focus-label">${t('hud.focusDefault')}</div>
+            <div id="vk-hud-oracle-resource" class="vk-oracle-resource">${t('support.reserves', { schematics: 0 })}</div>
+          </section>
 
-    const hit = document.createElement('div');
-    hit.id = 'vk-hud-hit';
-    hit.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
-    el.appendChild(hit);
-    const btnStyle = 'position:absolute;background:transparent;border:none;cursor:pointer;pointer-events:all;padding:0;margin:0;outline:none;appearance:none;-webkit-appearance:none;opacity:0;';
-    hit.innerHTML = `
-      <button id="vk-hud-build-attack" class="vk-hit" type="button" style="${btnStyle}"></button>
-      <button id="vk-hud-build-buff"   class="vk-hit" type="button" style="${btnStyle}"></button>
-      <button id="vk-hud-unit-a" class="vk-hit" type="button" style="${btnStyle}"></button>
-      <button id="vk-hud-unit-b" class="vk-hit" type="button" style="${btnStyle}opacity:0;pointer-events:none;" disabled></button>
-      <button id="vk-hud-unit-c" class="vk-hit" type="button" style="${btnStyle}opacity:0;pointer-events:none;" disabled></button>
-      <button id="vk-hud-unit-d" class="vk-hit" type="button" style="${btnStyle}opacity:0;pointer-events:none;" disabled></button>
+          <section class="vk-panel-block vk-orders-block">
+            <div class="vk-order-column">
+              <div class="vk-command-grid">
+                <button id="vk-hud-build-attack" class="vk-command-card" type="button" data-selected="false">
+                  <span class="vk-card-key">T</span>
+                  <span class="vk-card-name">${t('hud.attackTower')}</span>
+                  <span class="vk-card-desc">${t('hud.attackDesc')}</span>
+                  <span class="vk-card-cost">E 50</span>
+                </button>
+                <button id="vk-hud-build-buff" class="vk-command-card" type="button" data-selected="false">
+                  <span class="vk-card-key">A</span>
+                  <span class="vk-card-name">${t('hud.buffTower')}</span>
+                  <span class="vk-card-desc">${t('hud.buffDesc')}</span>
+                  <span class="vk-card-cost">E 40</span>
+                </button>
+                <button id="vk-hud-build-sell" class="vk-command-card" type="button" data-selected="false">
+                  <span class="vk-card-key">R</span>
+                  <span class="vk-card-name">${t('hud.salvageTower')}</span>
+                  <span class="vk-card-desc">${t('hud.salvageDesc')}</span>
+                  <span class="vk-card-cost">E 15-25/s</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="vk-order-column">
+              <div class="vk-command-grid vk-command-grid-units">
+                <button id="vk-hud-unit-a" class="vk-command-card" type="button">
+                  <span class="vk-card-key">W</span>
+                  <span class="vk-card-name">${t('hud.viking')}</span>
+                  <span class="vk-card-desc">${t('hud.vikingDesc')}</span>
+                  <span id="vk-cost-viking" class="vk-card-cost">E 0 / 30</span>
+                </button>
+                <button id="vk-hud-unit-b" class="vk-command-card" type="button">
+                  <span class="vk-card-key">C</span>
+                  <span class="vk-card-name">${t('hud.collector')}</span>
+                  <span class="vk-card-desc">${t('hud.collectorDesc')}</span>
+                  <span id="vk-cost-collector" class="vk-card-cost">E 0 / 20</span>
+                </button>
+                <button id="vk-hud-unit-c" class="vk-command-card" type="button">
+                  <span class="vk-card-key">B</span>
+                  <span class="vk-card-name">${t('hud.cybernetic')}</span>
+                  <span class="vk-card-desc">${t('hud.cyberneticDesc')}</span>
+                  <span id="vk-cost-cybernetic" class="vk-card-cost">L 0 / 12</span>
+                </button>
+                <button id="vk-hud-unit-d" class="vk-command-card is-locked" type="button" disabled>
+                  <span class="vk-card-key">G</span>
+                  <span class="vk-card-name">${t('hud.guardian')}</span>
+                  <span class="vk-card-desc">${t('hud.guardianDesc')}</span>
+                  <span class="vk-card-cost">C 35</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+      </div>
     `;
-    this.bindEv(el);
-    this.resizeObs = new ResizeObserver(() => this.syncSize());
-    this.resizeObs.observe(el);
-    this.syncSize();
-    this.startLoop();
+
+    container.appendChild(this.el);
+    this.bindEvents();
+    this.updateOracleInsight();
   }
 
   unmount(): void {
-    cancelAnimationFrame(this.rafId);
-    this.resizeObs?.disconnect();
-    this.el?.remove(); this.el = null; this.cvs = null; this.ctx = null;
+    if (this.s.alertTimer) clearTimeout(this.s.alertTimer);
+    this.el?.remove();
+    this.el = null;
     document.getElementById(OVERLAY_ID)?.remove();
   }
 
-  setCommandCallbacks(c: CommandCallbacks): void { this.cbs = { ...c }; }
-  setBuildSelection(s: BuildAction | null): void { this.s.armedAction = s; }
-  setCommandMessage(m: string): void { this.s.message = m; }
+  setCommandCallbacks(c: CommandCallbacks): void {
+    this.cbs = { ...c };
+  }
 
-  setActionAvailability(a: { attack: boolean; buff: boolean }): void {
-    this.s.attackAvail = a.attack; this.s.buffAvail = a.buff;
-    const ab = this.el?.querySelector<HTMLButtonElement>('#vk-hud-build-attack');
-    const bb = this.el?.querySelector<HTMLButtonElement>('#vk-hud-build-buff');
-    if (ab) ab.disabled = !a.attack; if (bb) bb.disabled = !a.buff;
+  setBuildSelection(selection: BuildAction | null): void {
+    this.s.armedAction = selection;
+    if (!this.el) return;
+    const attack = this.el.querySelector<HTMLElement>('#vk-hud-build-attack');
+    const buff = this.el.querySelector<HTMLElement>('#vk-hud-build-buff');
+    const sell = this.el.querySelector<HTMLElement>('#vk-hud-build-sell');
+    const items: Record<BuildAction, HTMLElement | null> = { attack, buff, sell };
+    for (const [key, el] of Object.entries(items)) {
+      if (!el) continue;
+      const active = selection === key;
+      el.dataset.selected = active ? 'true' : 'false';
+      el.classList.toggle('is-active', active);
+    }
+  }
+
+  setCommandMessage(message: string): void {
+    this.updateText('#vk-hud-command-message', message);
+    this.updateOracleInsight();
+  }
+
+  setActionAvailability(state: { attack: boolean; buff: boolean; sell?: boolean }): void {
+    if (!this.el) return;
+    const attack = this.el.querySelector<HTMLButtonElement>('#vk-hud-build-attack');
+    const buff = this.el.querySelector<HTMLButtonElement>('#vk-hud-build-buff');
+    const sell = this.el.querySelector<HTMLButtonElement>('#vk-hud-build-sell');
+    if (attack) attack.disabled = !state.attack;
+    if (buff) buff.disabled = !state.buff;
+    if (sell && state.sell !== undefined) sell.disabled = !state.sell;
+    this.updateOracleInsight();
+  }
+
+  setUnitAvailability(state: { viking: boolean; collector: boolean; cybernetic: boolean }): void {
+    if (!this.el) return;
+    const viking = this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-a');
+    const collector = this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-b');
+    const cybernetic = this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-c');
+    if (viking) viking.disabled = !state.viking;
+    if (collector) collector.disabled = !state.collector;
+    if (cybernetic) cybernetic.disabled = !state.cybernetic;
+    this.updateOracleInsight();
+  }
+
+  setSupportAvailability(state: { overdrive: boolean; orbital: boolean; missile: boolean; lance: boolean }): void {
+    if (!this.el) return;
+    const overdrive = this.el.querySelector<HTMLButtonElement>('#vk-support-overdrive');
+    const orbital = this.el.querySelector<HTMLButtonElement>('#vk-support-orbital');
+    const missile = this.el.querySelector<HTMLButtonElement>('#vk-support-missile');
+    const lance = this.el.querySelector<HTMLButtonElement>('#vk-support-lance');
+    if (overdrive) overdrive.disabled = !state.overdrive;
+    if (orbital) orbital.disabled = !state.orbital;
+    if (missile) missile.disabled = !state.missile;
+    if (lance) lance.disabled = !state.lance;
+    this.updateOracleInsight();
   }
 
   update(state: HudState): void {
-    if (state.wave !== undefined) this.s.wave = `Wave ${state.wave}`;
-    if (state.health !== undefined) {
-      this.s.hp = Math.max(0, Number(state.health));
-      if (state.citadelMaxHp) this.s.maxHp = state.citadelMaxHp;
+    if (!this.el) return;
+
+    if (state.wave !== undefined) this.updateText('#vk-hud-wave', String(state.wave));
+    if (state.resources !== undefined) {
+      this.s.resources = Math.max(0, Math.floor(Number(state.resources) || 0));
+      this.updateText('#vk-hud-resources', `E ${this.s.resources}`);
+      this.updateText('#vk-cost-viking', `E ${this.s.resources} / 30`);
+      this.updateText('#vk-cost-collector', `E ${this.s.resources} / 20`);
+      const vikingBtn = this.el?.querySelector<HTMLElement>('#vk-hud-unit-a');
+      const collectorBtn = this.el?.querySelector<HTMLElement>('#vk-hud-unit-b');
+      if (vikingBtn) vikingBtn.style.setProperty('--cost-color', this.s.resources >= 30 ? '#7fffb2' : '#ff7c7c');
+      if (collectorBtn) collectorBtn.style.setProperty('--cost-color', this.s.resources >= 20 ? '#7fffb2' : '#ff7c7c');
     }
-    if (state.resources !== undefined) this.s.resources = Math.floor(Number(state.resources));
+    if (state.crystals !== undefined) {
+      this.s.crystals = Math.max(0, Math.floor(Number(state.crystals) || 0));
+      this.updateText('#vk-hud-crystals', `C ${this.s.crystals}`);
+    }
+    if (state.latfa !== undefined) {
+      this.s.latfa = Math.max(0, Math.floor(Number(state.latfa) || 0));
+      this.updateText('#vk-hud-latfa', `L ${this.s.latfa}`);
+    }
+    {
+      const cd = Math.ceil(Number(state.cyberneticCooldown ?? 0) || 0);
+      const slots = Number(state.cyberneticSlots ?? 3);
+      const cyberneticBtn = this.el?.querySelector<HTMLElement>('#vk-hud-unit-c');
+      if (cd > 0) {
+        this.updateText('#vk-cost-cybernetic', `${cd}с · ${slots}/3`);
+        if (cyberneticBtn) cyberneticBtn.style.setProperty('--cost-color', '#ff9944');
+      } else {
+        this.updateText('#vk-cost-cybernetic', slots > 0 ? `L ${this.s.latfa} / 12` : 'перезарядка');
+        if (cyberneticBtn) cyberneticBtn.style.setProperty('--cost-color', this.s.latfa >= 12 && slots > 0 ? '#7fffb2' : '#ff7c7c');
+      }
+    }
+    if (state.schematics !== undefined) {
+      this.s.schematics = Math.max(0, Math.floor(Number(state.schematics) || 0));
+    }
+
+    if (state.health !== undefined) this.s.hp = Math.max(0, Number(state.health) || 0);
+    if (state.citadelMaxHp !== undefined) this.s.maxHp = Math.max(1, Number(state.citadelMaxHp) || 1);
+    this.updateText('#vk-hud-health', `${Math.round(this.s.hp)} / ${this.s.maxHp}`);
+    const fill = this.el.querySelector<HTMLElement>('#vk-hud-health-fill');
+    if (fill) fill.style.width = `${Math.max(0, Math.min(100, (this.s.hp / this.s.maxHp) * 100))}%`;
+
+    if (state.waveTimer !== undefined) {
+      const min = Math.floor(state.waveTimer / 60);
+      const sec = Math.floor(state.waveTimer % 60);
+      this.updateText('#vk-hud-timer', `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`);
+    }
+
+    const activeEnemies = state.enemiesAlive ?? this.s.enemiesAlive;
+    const queuedEnemies = state.enemiesQueued ?? this.s.enemiesQueued;
+    this.s.enemiesAlive = activeEnemies;
+    this.s.enemiesQueued = queuedEnemies;
+    this.s.alliesAlive = state.alliesAlive ?? this.s.alliesAlive;
+    this.s.towerCount = state.towerCount ?? this.s.towerCount;
+    this.updateText('#vk-hud-enemies-active', String(activeEnemies));
+    this.updateText('#vk-hud-enemies', String(activeEnemies));
+    this.updateText('#vk-hud-enemies-queued', String(queuedEnemies));
+    this.updateText('#vk-hud-threat-total', this.describePressure(activeEnemies, queuedEnemies));
+    this.updateText('#vk-hud-allies', String(this.s.alliesAlive));
+    this.updateText('#vk-hud-towers', String(this.s.towerCount));
+
+    if (state.totalDamage !== undefined) this.s.dmg = Math.max(0, Number(state.totalDamage) || 0);
+    if (state.enemiesKilled !== undefined) this.s.kills = Math.max(0, Number(state.enemiesKilled) || 0);
+    this.updateText('#vk-hud-kills', String(this.s.kills));
+    this.updateText('#vk-hud-damage', String(this.s.dmg));
+    this.updateText('#vk-hud-score', String(this.s.dmg * 10 + this.s.kills * 50));
+
     if (state.armedAction !== undefined) this.setBuildSelection(state.armedAction);
-    if (state.message !== undefined) this.s.message = state.message;
-    if (state.canAffordAttack !== undefined || state.canAffordBuff !== undefined) {
-      const ab = this.el?.querySelector<HTMLButtonElement>('#vk-hud-build-attack');
-      const bb = this.el?.querySelector<HTMLButtonElement>('#vk-hud-build-buff');
+    if (state.message !== undefined) this.setCommandMessage(state.message);
+    if (state.canAffordAttack !== undefined || state.canAffordBuff !== undefined || state.canSalvage !== undefined) {
       this.setActionAvailability({
-        attack: state.canAffordAttack ?? !(ab?.disabled ?? false),
-        buff: state.canAffordBuff ?? !(bb?.disabled ?? false),
+        attack: state.canAffordAttack ?? !(this.el.querySelector<HTMLButtonElement>('#vk-hud-build-attack')?.disabled ?? false),
+        buff: state.canAffordBuff ?? !(this.el.querySelector<HTMLButtonElement>('#vk-hud-build-buff')?.disabled ?? false),
+        sell: state.canSalvage ?? !(this.el.querySelector<HTMLButtonElement>('#vk-hud-build-sell')?.disabled ?? false),
       });
     }
-    // Extended
-    if (state.waveTimer !== undefined) this.s.waveTimer = state.waveTimer;
-    if (state.enemiesAlive !== undefined) this.s.enemiesAlive = state.enemiesAlive;
-    if (state.enemiesQueued !== undefined) this.s.enemiesQueued = state.enemiesQueued;
-    if (state.alliesAlive !== undefined) this.s.alliesAlive = state.alliesAlive;
-    if (state.crystals !== undefined) { this.s.crystals = state.crystals; this.features.crystals = true; }
-    if (state.towerCount !== undefined) this.s.towerCount = state.towerCount;
-    if (state.alert !== undefined && state.alert) {
-      this.s.alert = state.alert; this.s.alertTimer = 4;
+    if (state.canAffordViking !== undefined || state.canAffordCollector !== undefined || state.canAffordCybernetic !== undefined) {
+      this.setUnitAvailability({
+        viking: state.canAffordViking ?? !(this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-a')?.disabled ?? false),
+        collector: state.canAffordCollector ?? !(this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-b')?.disabled ?? false),
+        cybernetic: state.canAffordCybernetic ?? !(this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-c')?.disabled ?? false),
+      });
     }
-    if (state.enemiesKilled !== undefined) { this.s.enemiesKilled = state.enemiesKilled; this.features.stats = true; }
-    if (state.totalDamage !== undefined) this.s.totalDamage = state.totalDamage;
+    if (
+      state.canSupportOverdrive !== undefined
+      || state.canSupportOrbital !== undefined
+      || state.canSupportMissile !== undefined
+      || state.canSupportLance !== undefined
+    ) {
+      this.setSupportAvailability({
+        overdrive: state.canSupportOverdrive ?? !(this.el.querySelector<HTMLButtonElement>('#vk-support-overdrive')?.disabled ?? false),
+        orbital: state.canSupportOrbital ?? !(this.el.querySelector<HTMLButtonElement>('#vk-support-orbital')?.disabled ?? false),
+        missile: state.canSupportMissile ?? !(this.el.querySelector<HTMLButtonElement>('#vk-support-missile')?.disabled ?? false),
+        lance: state.canSupportLance ?? !(this.el.querySelector<HTMLButtonElement>('#vk-support-lance')?.disabled ?? false),
+      });
+    }
+    this.s.supportCooldowns.overdrive = Math.max(0, Number(state.supportOverdriveCooldown ?? this.s.supportCooldowns.overdrive) || 0);
+    this.s.supportCooldowns.orbital = Math.max(0, Number(state.supportOrbitalCooldown ?? this.s.supportCooldowns.orbital) || 0);
+    this.s.supportCooldowns.missile = Math.max(0, Number(state.supportMissileCooldown ?? this.s.supportCooldowns.missile) || 0);
+    this.s.supportCooldowns.lance = Math.max(0, Number(state.supportLanceCooldown ?? this.s.supportCooldowns.lance) || 0);
 
+    this.updateOracleInsight();
+
+    if (state.alert) this.showAlert(state.alert);
     if (this.s.hp <= 0) this.showWinLossOverlay('lost');
-    if (state.won === true) this.showWinLossOverlay('won');
+    if (state.won) this.showWinLossOverlay('won');
   }
 
   showWinLossOverlay(result: 'won' | 'lost'): void {
-    document.getElementById(OVERLAY_ID)?.remove();
-    const v = result === 'won';
-    const ov = document.createElement('div'); ov.id = OVERLAY_ID;
-    ov.innerHTML = `<div class="vk-res-panel" data-r="${result}">
-      <div class="vk-res-rune">${v ? 'ᚢ' : 'ᚱ'}</div>
-      <p class="vk-res-k">Battle Resolution</p>
-      <h2 class="vk-res-t">${v ? 'Victory' : 'Defeat'}</h2>
-      <p class="vk-res-d">${v ? 'The citadel holds!' : 'The citadel has fallen.'}</p>
-      <button id="vk-play-again" class="vk-res-btn" type="button">Play Again</button>
-    </div>`;
-    document.body.appendChild(ov);
-    ov.querySelector<HTMLButtonElement>('#vk-play-again')?.addEventListener('click', () => window.location.reload());
+    if (document.getElementById(OVERLAY_ID)) return;
+    const win = result === 'won';
+    const overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+    overlay.innerHTML = `
+        <div class="vk-res-panel" data-r="${result}">
+        <div class="vk-res-rune">${win ? t('hud.overlayAegis') : t('hud.overlayFall')}</div>
+        <p class="vk-res-k">${t('hud.battleResolution')}</p>
+        <h2 class="vk-res-t">${win ? t('hud.victory') : t('hud.defeat')}</h2>
+        <p class="vk-res-d">${win ? t('hud.victoryDesc') : t('hud.defeatDesc')}</p>
+        <button id="vk-play-again" class="vk-res-btn" type="button">${t('common.playAgain')}</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector<HTMLButtonElement>('#vk-play-again')?.addEventListener('click', () => window.location.reload());
   }
 
-  // ── Layout ──
-
-  private syncSize(): void {
-    if (!this.cvs || !this.el) return;
-    const r = this.el.getBoundingClientRect();
-    this.cvs.width = Math.round(r.width);
-    this.cvs.height = Math.round(r.height);
-    this.posHits();
+  private showAlert(message: string): void {
+    const strip = this.el?.querySelector<HTMLElement>('#hud-alert-strip');
+    if (!strip) return;
+    strip.textContent = message;
+    strip.classList.add('is-alert');
+    if (this.s.alertTimer) clearTimeout(this.s.alertTimer);
+    this.s.alertTimer = setTimeout(() => {
+      strip.classList.remove('is-alert');
+      strip.textContent = t('hud.alertDefault');
+    }, 4000);
   }
 
-  private lay() {
-    const W = this.cvs?.width ?? 800;
-    const H = this.cvs?.height ?? 180;
-    const p = 4;
-    const gap = 4;
-    const alertH = 18;
-    const topBarH = 38;
-    const botBarH = 214;
-    const mainH = botBarH - alertH - p;
-    const topY = H - botBarH + p;
-
-    // 3 columns at bottom: Citadel(30%) | Defenses(35%) | Warband(35%)
-    const cols = [0.30, 0.35, 0.35];
-    const totalGap = gap * 2;
-    const usable = W - p * 2 - totalGap;
-    const cw = cols.map(r => usable * r);
-    const cx = [p];
-    for (let i = 1; i < 3; i++) cx.push(cx[i - 1] + cw[i - 1] + gap);
-
-    // Tower buttons in Defenses col
-    const bGap = 4;
-    const bw = (cw[1] - bGap) / 2;
-    const bh = mainH * 0.48;
-    const atkBtn = { x: cx[1], y: topY + 20, w: bw, h: bh };
-    const bufBtn = { x: cx[1] + bw + bGap, y: topY + 20, w: bw, h: bh };
-
-    // Unit buttons 2×2 in Warband col
-    const uGap = 4;
-    const uw = (cw[2] - uGap) / 2;
-    const uh = (mainH - 20 - uGap) / 2;
-    const units = [
-      { x: cx[2], y: topY + 20, w: uw, h: uh },
-      { x: cx[2] + uw + uGap, y: topY + 20, w: uw, h: uh },
-      { x: cx[2], y: topY + 20 + uh + uGap, w: uw, h: uh },
-      { x: cx[2] + uw + uGap, y: topY + 20 + uh + uGap, w: uw, h: uh },
-    ];
-
-    return { W, H, p, topBarH, botBarH, mainH, alertH, cx, cw, topY, atkBtn, bufBtn, units };
-  }
-
-  private posHits(): void {
+  private bindEvents(): void {
     if (!this.el) return;
-    const L = this.lay();
-    const set = (sel: string, r: { x: number; y: number; w: number; h: number }) => {
-      const b = this.el!.querySelector<HTMLElement>(sel);
-      if (!b) return;
-      b.style.left = r.x + 'px'; b.style.top = r.y + 'px';
-      b.style.width = r.w + 'px'; b.style.height = r.h + 'px';
-    };
-    set('#vk-hud-build-attack', L.atkBtn);
-    set('#vk-hud-build-buff', L.bufBtn);
-    L.units.forEach((u, i) => set(`#vk-hud-unit-${'abcd'[i]}`, u));
+    this.el.querySelector('#vk-hud-build-attack')?.addEventListener('click', () => this.cbs.attack?.());
+    this.el.querySelector('#vk-hud-build-buff')?.addEventListener('click', () => this.cbs.buff?.());
+    this.el.querySelector('#vk-hud-build-sell')?.addEventListener('click', () => this.cbs.sell?.());
+    this.el.querySelector('#vk-hud-unit-a')?.addEventListener('click', () => this.cbs.stagedUnitA?.());
+    this.el.querySelector('#vk-hud-unit-b')?.addEventListener('click', () => this.cbs.stagedUnitB?.());
+    this.el.querySelector('#vk-hud-unit-c')?.addEventListener('click', () => this.cbs.stagedUnitC?.());
+    this.el.querySelector('#vk-hud-unit-d')?.addEventListener('click', () => this.cbs.stagedUnitD?.());
+    this.el.querySelector('#vk-support-overdrive')?.addEventListener('click', () => this.cbs.supportA?.());
+    this.el.querySelector('#vk-support-orbital')?.addEventListener('click', () => this.cbs.supportB?.());
+    this.el.querySelector('#vk-support-missile')?.addEventListener('click', () => this.cbs.supportC?.());
+    this.el.querySelector('#vk-support-lance')?.addEventListener('click', () => this.cbs.supportD?.());
   }
 
-  // ── Render ──
-
-  private startLoop(): void {
-    const loop = () => {
-      this.s.t += 0.016;
-      const tr = this.s.maxHp > 0 ? this.s.hp / this.s.maxHp : 1;
-      this.s.hpSmooth += (tr - this.s.hpSmooth) * 0.08;
-      if (this.s.alertTimer > 0) this.s.alertTimer -= 0.016;
-      this.render();
-      this.rafId = requestAnimationFrame(loop);
-    };
-    this.rafId = requestAnimationFrame(loop);
+  private updateText(selector: string, value: string): void {
+    const el = this.el?.querySelector<HTMLElement>(selector);
+    if (el) el.textContent = value;
   }
 
-  private render(): void {
-    const c = this.ctx; if (!c || !this.cvs || this.cvs.width === 0) return;
-    const L = this.lay();
-    c.clearRect(0, 0, L.W, L.H);
+  private updateOracleInsight(): void {
+    if (!this.el) return;
+    const attackReady = !(this.el.querySelector<HTMLButtonElement>('#vk-hud-build-attack')?.disabled ?? true);
+    const buffReady = !(this.el.querySelector<HTMLButtonElement>('#vk-hud-build-buff')?.disabled ?? true);
+    const sellReady = !(this.el.querySelector<HTMLButtonElement>('#vk-hud-build-sell')?.disabled ?? true);
+    const vikingReady = !(this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-a')?.disabled ?? true);
+    const collectorReady = !(this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-b')?.disabled ?? true);
+    const cyberneticReady = !(this.el.querySelector<HTMLButtonElement>('#vk-hud-unit-c')?.disabled ?? true);
+    const overdriveReady = !(this.el.querySelector<HTMLButtonElement>('#vk-support-overdrive')?.disabled ?? true);
+    const orbitalReady = !(this.el.querySelector<HTMLButtonElement>('#vk-support-orbital')?.disabled ?? true);
+    const missileReady = !(this.el.querySelector<HTMLButtonElement>('#vk-support-missile')?.disabled ?? true);
+    const lanceReady = !(this.el.querySelector<HTMLButtonElement>('#vk-support-lance')?.disabled ?? true);
+    const totalPressure = this.s.enemiesAlive + this.s.enemiesQueued;
+    void attackReady;
+    void buffReady;
+    void sellReady;
+    void vikingReady;
+    void collectorReady;
+    void cyberneticReady;
 
-    this.drawBg(c, L);
-    this.drawTopBar(c, L);
-    this.drawCitadel(c, L);
-    this.drawDefenses(c, L);
-    this.drawWarband(c, L);
-    this.drawAlertBar(c, L);
-  }
-
-  // ── Background ──
-
-  private drawBg(c: CanvasRenderingContext2D, L: ReturnType<typeof this.lay>): void {
-    // Bottom panel background
-    const y = L.H - L.botBarH;
-    const bg = c.createLinearGradient(0, y, 0, L.H);
-    bg.addColorStop(0, C.bg1); bg.addColorStop(1, C.bg3);
-    c.fillStyle = bg; c.fillRect(0, y, L.W, L.botBarH);
-
-    // Top glow line mapping to bottom panel
-    const tg = c.createLinearGradient(0, y, L.W, y);
-    tg.addColorStop(0, 'transparent'); tg.addColorStop(0.35, C.accentD);
-    tg.addColorStop(0.65, C.accentD); tg.addColorStop(1, 'transparent');
-    c.fillStyle = tg; c.fillRect(0, y, L.W, 1.5);
-
-    // Side accents for bottom panel
-    c.fillStyle = C.accentD;
-    c.fillRect(0, y, 2, L.botBarH); c.fillRect(L.W - 2, y, 2, L.botBarH);
-  }
-
-  // ── Top Bar ──
-
-  private drawTopBar(c: CanvasRenderingContext2D, L: ReturnType<typeof this.lay>): void {
-    const y = 0, h = L.topBarH;
-    
-    // Top Bar Background
-    c.fillStyle = 'rgba(2, 6, 14, 0.96)';
-    c.fillRect(0, y, L.W, h);
-    c.fillStyle = C.border;
-    c.fillRect(0, h - 0.5, L.W, 0.5);
-
-    const cy = h / 2;
-
-    // LEFT: Resources
-    const ex = 12, ew = 72, eh = Math.min(26, h - 8);
-    const ey = cy - eh / 2;
-    
-    // Energy
-    c.fillStyle = 'rgba(10, 24, 42, 0.5)'; c.strokeStyle = C.border; c.lineWidth = 0.5;
-    if (c.roundRect) {
-      c.beginPath(); c.roundRect(ex, ey, ew, eh, 4); c.fill(); c.stroke();
+    let focus = t('hud.focusDefault');
+    if (this.s.armedAction === 'attack') {
+      focus = getLocalizedFocus('attack');
+    } else if (this.s.armedAction === 'buff') {
+      focus = getLocalizedFocus('buff');
+    } else if (this.s.armedAction === 'sell') {
+      focus = getLocalizedFocus('sell');
+    } else if (overdriveReady && this.s.alliesAlive > 0 && totalPressure >= 4) {
+      focus = t('support.overdriveStatusReady');
+    } else if (orbitalReady && totalPressure >= 8) {
+      focus = t('support.orbitalStatusReady');
+    } else if (missileReady && totalPressure >= 6) {
+      focus = t('support.missileStatusReady');
+    } else if (lanceReady && totalPressure >= 1) {
+      focus = t('support.lanceStatusReady');
+    } else if (this.s.enemiesAlive === 0 && this.s.enemiesQueued === 0) {
+      focus = getLocalizedFocus('calm');
     } else {
-      c.fillRect(ex, ey, ew, eh); c.strokeRect(ex, ey, ew, eh);
-    }
-    c.fillStyle = '#ffd84a'; c.font = '14px Inter,sans-serif'; c.fillText('⚡', ex + 8, cy + 4);
-    c.fillStyle = C.text; c.font = 'bold 12px Inter,sans-serif'; c.fillText(`${this.s.resources}`, ex + 30, cy + 4);
-
-    // Crystals
-    if (this.features.crystals) {
-      const cxpos = ex + ew + 12;
-      c.fillStyle = 'rgba(10, 24, 42, 0.5)'; c.strokeStyle = C.border;
-      if (c.roundRect) {
-        c.beginPath(); c.roundRect(cxpos, ey, ew, eh, 4); c.fill(); c.stroke();
-      } else {
-        c.fillRect(cxpos, ey, ew, eh); c.strokeRect(cxpos, ey, ew, eh);
-      }
-      c.fillStyle = '#a06aff'; c.font = '14px Inter,sans-serif'; c.fillText('💎', cxpos + 8, cy + 4);
-      c.fillStyle = C.text; c.font = 'bold 12px Inter,sans-serif'; c.fillText(`${this.s.crystals}`, cxpos + 30, cy + 4);
+      focus = getLocalizedFocus('default', this.s.enemiesAlive, this.s.enemiesQueued, this.s.towerCount, this.s.alliesAlive);
     }
 
-    // Line separator
-    c.fillStyle = C.textDim;
-    c.fillRect(ex + ew * 2 + 24, cy - 10, 1, 20);
-
-    // CENTER: Phase & Time
-    c.textAlign = 'center';
-    c.fillStyle = C.textDim; c.font = '600 8px Inter,monospace';
-    c.fillText('ФАЗА ОБОРОНЫ', L.W / 2, cy - 6);
-
-    const timer = Math.max(0, Math.ceil(this.s.waveTimer));
-    const min = Math.floor(timer / 60);
-    const sec = timer % 60;
-    const timerStr = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-    const isUrgent = timer > 0 && timer <= 5;
-    
-    c.fillStyle = isUrgent ? C.red : C.text; 
-    c.font = 'bold 20px Inter,sans-serif';
-    if (isUrgent) { c.shadowColor = C.red; c.shadowBlur = 6; }
-    c.fillText(timerStr, L.W / 2, cy + 12);
-    c.shadowBlur = 0;
-    c.textAlign = 'left';
-
-    // RIGHT: Wave, Points, Enemies
-    c.textAlign = 'right';
-    const rx = L.W - 16;
-    c.fillStyle = C.textDim; c.font = '600 9px Inter,monospace';
-    c.fillText(`ОЧКИ: ${this.s.totalDamage * 10 + this.s.enemiesKilled * 50}`, rx, cy - 7);
-    c.fillText(`ВОЛНА ${this.s.wave}`, rx, cy + 4);
-    c.fillText(`ВРАГОВ: ${this.s.enemiesAlive + this.s.enemiesQueued}`, rx, cy + 15);
-    c.textAlign = 'left';
+    this.updateText(
+      '#vk-support-buff-status',
+      getSupportStatusLabel(
+        this.s.supportCooldowns.overdrive,
+        overdriveReady ? t('support.overdriveStatusReady') : t('support.overdriveStatusNeed'),
+      ),
+    );
+    this.updateText(
+      '#vk-support-drop-status',
+      getSupportStatusLabel(
+        this.s.supportCooldowns.orbital,
+        orbitalReady ? t('support.orbitalStatusReady') : t('support.orbitalStatusNeed'),
+      ),
+    );
+    this.updateText(
+      '#vk-support-rocket-status',
+      getSupportStatusLabel(
+        this.s.supportCooldowns.missile,
+        missileReady ? t('support.missileStatusReady') : t('support.missileStatusNeed'),
+      ),
+    );
+    this.updateText(
+      '#vk-support-heavy-status',
+      getSupportStatusLabel(
+        this.s.supportCooldowns.lance,
+        lanceReady ? t('support.lanceStatusReady') : t('support.lanceStatusNeed'),
+      ),
+    );
+    this.updateText('#vk-hud-focus-label', focus);
+    this.updateText('#vk-hud-oracle-resource', t('support.reserves', { schematics: this.s.schematics }));
   }
 
-  // ── 1. Citadel (left) ──
-
-  private drawCitadel(c: CanvasRenderingContext2D, L: ReturnType<typeof this.lay>): void {
-    const x = L.cx[0], w = L.cw[0], y = L.topY, h = L.mainH;
-    this.drawPanel(c, x, y, w, h);
-    this.drawLabel(c, x + 6, y + 4, 'CITADEL CORE', w - 12);
-
-    let cy = y + 26;
-
-    // Citadel icon circle
-    const iconR = Math.min(24, Math.max(16, h * 0.16));
-    const iconCx = x + 6 + iconR;
-    const iconCy = cy + iconR;
-    c.fillStyle = C.bg3;
-    c.beginPath(); c.arc(iconCx, iconCy, iconR + 2, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = C.accent; c.lineWidth = 1.5;
-    c.beginPath(); c.arc(iconCx, iconCy, iconR, 0, Math.PI * 2); c.stroke();
-    c.save(); c.beginPath(); c.arc(iconCx, iconCy, iconR - 1, 0, Math.PI * 2); c.clip();
-    if (this.imgs.citadel.complete && this.imgs.citadel.width > 0)
-      c.drawImage(this.imgs.citadel, iconCx - iconR + 1, iconCy - iconR + 1, (iconR - 1) * 2, (iconR - 1) * 2);
-    c.restore();
-
-    // HP Header
-    const txtX = x + 6 + iconR * 2 + 10;
-    const ratio = this.s.hpSmooth;
-    const hpCol = ratio > 0.6 ? C.accent : ratio > 0.3 ? '#c47aff' : C.red;
-
-    c.fillStyle = C.textDim; c.font = '600 8px Inter,sans-serif';
-    c.fillText('STRUCTURAL INTEGRITY', txtX, cy + 12);
-    c.fillStyle = hpCol; c.font = 'bold 18px Inter,sans-serif';
-    c.fillText(`${Math.ceil(this.s.hp)}/${this.s.maxHp}`, txtX, cy + 32);
-
-    cy += iconR * 2 + 16;
-
-    // HP bar
-    this.drawBar(c, x + 16, cy, w - 32, 10, ratio, hpCol);
-    cy += 28;
-
-    // Stats area
-    c.fillStyle = C.textDim; c.font = '600 7px Inter,sans-serif';
-    c.fillText('COMBAT HISTORY', x + 16, cy);
-    c.fillStyle = C.border; c.fillRect(x + 16, cy + 4, w - 32, 0.5);
-    cy += 16;
-
-    if (this.features.stats) {
-      c.fillStyle = C.textMid; c.font = '12px Inter,sans-serif';
-      c.fillText(`⚔ Enemies Eradicated: ${this.s.enemiesKilled}`, x + 16, cy + 6);
-      c.fillText(`💥 Power Projected: ${this.s.totalDamage}`, x + 16, cy + 26);
-      c.fillText(`🏗 Grid Towers: ${this.s.towerCount}`, x + 16, cy + 46);
-    } else {
-      c.fillStyle = C.lockedText; c.font = '11px Inter,sans-serif';
-      c.fillText('🔒 Logs Encrypted', x + 16, cy + 8);
-    }
+  private describePressure(activeEnemies: number, queuedEnemies: number): string {
+    const total = activeEnemies + queuedEnemies;
+    if (total <= 0) return t('hud.calm');
+    if (queuedEnemies > activeEnemies && total >= 10) return t('hud.surging');
+    if (total >= 18) return t('hud.critical');
+    if (total >= 10) return t('hud.high');
+    if (total >= 4) return t('hud.rising');
+    return t('hud.low');
   }
-
-  // ── 2. Defenses (center) ──
-
-  private drawDefenses(c: CanvasRenderingContext2D, L: ReturnType<typeof this.lay>): void {
-    const x = L.cx[1], w = L.cw[1], y = L.topY, h = L.mainH;
-    this.drawPanel(c, x, y, w, h);
-    this.drawLabel(c, x + 6, y + 4, 'DEFENSES', w - 12);
-
-    // Tower buttons
-    this.drawTowerBtn(c, L.atkBtn, 'ATTACK', '50⚡', this.imgs.attack,
-      this.s.armedAction === 'attack', this.s.attackAvail);
-    this.drawTowerBtn(c, L.bufBtn, 'BUFF', '40⚡', this.imgs.buff,
-      this.s.armedAction === 'buff', this.s.buffAvail);
-
-    // Console message area below buttons
-    const msgY = L.atkBtn.y + L.atkBtn.h + 8;
-    const msgH = h - (msgY - y) - 8;
-    if (msgH > 10) {
-      c.fillStyle = 'rgba(4,10,24,0.6)';
-      c.fillRect(x + 2, msgY, w - 4, msgH);
-      c.strokeStyle = C.border; c.lineWidth = 0.5;
-      c.strokeRect(x + 2, msgY, w - 4, msgH);
-
-      const blink = Math.sin(this.s.t * 4) > 0;
-      c.fillStyle = blink ? C.accent : 'transparent';
-      c.font = '8px monospace'; c.fillText('>', x + 8, msgY + 12);
-
-      c.fillStyle = C.textMid; c.font = '10px Inter,sans-serif';
-      const mw = w - 24;
-      const words = this.s.message.split(' ');
-      let line = '', ly = msgY + 12;
-      for (const wd of words) {
-        const test = line ? `${line} ${wd}` : wd;
-        if (c.measureText(test).width > mw && line) {
-          c.fillText(line, x + 18, ly); line = wd; ly += 14;
-          if (ly > msgY + msgH - 4) break;
-        } else line = test;
-      }
-      if (line && ly <= msgY + msgH - 4) c.fillText(line, x + 18, ly);
-    }
-  }
-
-  // ── 3. Warband (right) ──
-
-  private drawWarband(c: CanvasRenderingContext2D, L: ReturnType<typeof this.lay>): void {
-    const x = L.cx[2], w = L.cw[2], y = L.topY, h = L.mainH;
-    this.drawPanel(c, x, y, w, h);
-
-    c.fillStyle = C.accent; c.font = '700 8px Inter,sans-serif';
-    c.fillText('⬡ WARBAND', x + 6, y + 12);
-    c.fillStyle = C.textDim; c.font = '600 8px Inter,sans-serif';
-    c.textAlign = 'right';
-    c.fillText(`${this.s.alliesAlive} on field`, x + w - 6, y + 12);
-    c.textAlign = 'left';
-
-    c.fillStyle = C.border; c.fillRect(x + 6, y + 16, w - 12, 0.5);
-
-    const defs = [
-      { n: 'VIKING', sub: 'Melee • 50⚡', img: this.imgs.unitA, live: true, locked: false },
-      { n: 'COLLECT', sub: 'Gather', img: this.imgs.unitB, live: false, locked: false },
-      { n: 'BERSERK', sub: 'Heavy', img: this.imgs.unitC, live: false, locked: !this.features.berserk },
-      { n: 'GUARD', sub: 'Ranged', img: this.imgs.unitD, live: false, locked: !this.features.guard },
-    ];
-
-    L.units.forEach((u, i) => this.drawUnitBtn(c, u, defs[i]));
-  }
-
-  // ── Alert Bar (bottom strip) ──
-
-  private drawAlertBar(c: CanvasRenderingContext2D, L: ReturnType<typeof this.lay>): void {
-    const y = L.H - L.alertH;
-    c.fillStyle = 'rgba(4,10,20,0.9)';
-    c.fillRect(0, y, L.W, L.alertH);
-    c.fillStyle = 'rgba(40,100,200,0.2)';
-    c.fillRect(0, y, L.W, 0.5);
-
-    if (this.s.alertTimer > 0 && this.s.alert) {
-      const flash = Math.sin(this.s.t * 6) > 0 ? 0.9 : 0.6;
-      c.fillStyle = `rgba(255, 90, 90, ${flash * 0.12})`;
-      c.fillRect(0, y, L.W, L.alertH);
-
-      c.fillStyle = `rgba(255, 200, 100, ${flash})`;
-      c.font = 'bold 10px Inter,sans-serif';
-      c.textAlign = 'center';
-      c.fillText(`⚠ ${this.s.alert}`, L.W / 2, y + 12);
-      c.textAlign = 'left';
-    } else {
-      c.fillStyle = C.textDim; c.font = '9px Inter,sans-serif';
-      c.textAlign = 'center';
-      c.fillText('Runic defense grid online • MagicBlock devnet', L.W / 2, y + 12);
-      c.textAlign = 'left';
-    }
-  }
-
-  // ── Drawing primitives ──
-
-  private drawPanel(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
-    const bg = c.createLinearGradient(x, y, x, y + h);
-    bg.addColorStop(0, 'rgba(8,18,40,0.85)'); bg.addColorStop(1, 'rgba(4,10,24,0.92)');
-    c.fillStyle = bg; c.fillRect(x, y, w, h);
-    c.strokeStyle = C.border; c.lineWidth = 0.5; c.strokeRect(x, y, w, h);
-    const tg = c.createLinearGradient(x, y, x + w, y);
-    tg.addColorStop(0, 'transparent'); tg.addColorStop(0.5, C.borderL); tg.addColorStop(1, 'transparent');
-    c.fillStyle = tg; c.fillRect(x, y, w, 0.5);
-  }
-
-  private drawLabel(c: CanvasRenderingContext2D, x: number, y: number, title: string, w: number): void {
-    c.fillStyle = C.accent; c.font = '700 8px Inter,sans-serif';
-    c.fillText(`⬡ ${title}`, x, y + 10);
-    c.fillStyle = C.border; c.fillRect(x, y + 14, w, 0.5);
-  }
-
-  private drawBar(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, ratio: number, col: string): void {
-    c.fillStyle = 'rgba(8,18,40,0.9)'; c.fillRect(x, y, w, h);
-    c.strokeStyle = C.accentD; c.lineWidth = 0.5; c.strokeRect(x, y, w, h);
-    const fw = Math.max(0, w * ratio);
-    if (fw > 0) {
-      const g = c.createLinearGradient(x, y, x + fw, y);
-      g.addColorStop(0, C.accentD); g.addColorStop(1, col);
-      c.fillStyle = g; c.fillRect(x + 0.5, y + 0.5, fw - 1, h - 1);
-    }
-  }
-
-  private drawTowerBtn(
-    c: CanvasRenderingContext2D,
-    r: { x: number; y: number; w: number; h: number },
-    label: string, cost: string, img: HTMLImageElement,
-    sel: boolean, avail: boolean
-  ): void {
-    c.globalAlpha = avail ? 1 : 0.35;
-    const bg = c.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
-    bg.addColorStop(0, sel ? '#12283e' : '#0a1828');
-    bg.addColorStop(1, sel ? '#0a1c30' : C.bg2);
-    c.fillStyle = bg; c.fillRect(r.x, r.y, r.w, r.h);
-
-    if (sel) {
-      c.shadowColor = C.accent; c.shadowBlur = 8 + Math.sin(this.s.t * 4) * 3;
-      c.strokeStyle = C.borderL; c.lineWidth = 1.5; c.strokeRect(r.x, r.y, r.w, r.h);
-      c.shadowBlur = 0;
-    } else {
-      c.strokeStyle = C.border; c.lineWidth = 0.5; c.strokeRect(r.x, r.y, r.w, r.h);
-    }
-
-    // Icon
-    const iS = Math.min(r.w * 0.5, r.h * 0.35, 28);
-    const ix = r.x + (r.w - iS) / 2, iy = r.y + 8;
-    c.fillStyle = C.bg3; c.fillRect(ix - 1, iy - 1, iS + 2, iS + 2);
-    c.strokeStyle = C.accentD; c.lineWidth = 0.5; c.strokeRect(ix - 1, iy - 1, iS + 2, iS + 2);
-    if (img.complete && img.width > 0) c.drawImage(img, ix, iy, iS, iS);
-
-    c.textAlign = 'center';
-    c.fillStyle = sel ? C.accentL : C.text; c.font = `bold ${Math.min(9, r.w * 0.1)}px Inter,sans-serif`;
-    c.fillText(label, r.x + r.w / 2, iy + iS + 11);
-    c.fillStyle = C.textDim; c.font = '8px Inter,sans-serif';
-    c.fillText(cost, r.x + r.w / 2, r.y + r.h - 5);
-    c.textAlign = 'left';
-    c.globalAlpha = 1;
-  }
-
-  private drawUnitBtn(
-    c: CanvasRenderingContext2D,
-    r: { x: number; y: number; w: number; h: number },
-    d: { n: string; sub: string; img: HTMLImageElement; live: boolean; locked: boolean }
-  ): void {
-    c.globalAlpha = d.locked ? 0.25 : d.live ? 1 : 0.45;
-
-    const bg = c.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
-    bg.addColorStop(0, d.live ? '#0c1e38' : '#081420');
-    bg.addColorStop(1, d.live ? '#061228' : C.bg3);
-    c.fillStyle = bg; c.fillRect(r.x, r.y, r.w, r.h);
-    c.strokeStyle = d.live ? C.accentD : C.border;
-    c.lineWidth = d.live ? 1 : 0.5; c.strokeRect(r.x, r.y, r.w, r.h);
-
-    if (d.live) {
-      const p = 0.15 + Math.sin(this.s.t * 2) * 0.08;
-      c.shadowColor = C.accent; c.shadowBlur = 5 * p;
-      c.strokeRect(r.x, r.y, r.w, r.h); c.shadowBlur = 0;
-    }
-
-    // Icon
-    const iS = Math.min(r.w * 0.5, r.h * 0.45, 28);
-    const ix = r.x + (r.w - iS) / 2, iy = r.y + 4;
-    if (d.img.complete && d.img.width > 0) c.drawImage(d.img, ix, iy, iS, iS);
-
-    c.textAlign = 'center';
-    c.fillStyle = d.locked ? C.lockedText : d.live ? C.accentL : C.textDim;
-    c.font = `600 ${Math.min(8, r.w * 0.08)}px Inter,sans-serif`;
-    c.fillText(d.n, r.x + r.w / 2, iy + iS + 9);
-
-    if (d.locked) {
-      c.fillStyle = C.lockedText; c.font = '10px Inter,sans-serif';
-      c.fillText('🔒', r.x + r.w / 2, iy + iS + 20);
-    } else {
-      c.fillStyle = C.textDim; c.font = '7px Inter,sans-serif';
-      c.fillText(d.sub, r.x + r.w / 2, iy + iS + 18);
-    }
-
-    c.textAlign = 'left'; c.globalAlpha = 1;
-  }
-
-  // ── Events ──
-
-  private bindEv(el: HTMLElement): void {
-    el.querySelector('#vk-hud-build-attack')?.addEventListener('click', () => this.cbs.attack?.());
-    el.querySelector('#vk-hud-build-buff')?.addEventListener('click', () => this.cbs.buff?.());
-    el.querySelector('#vk-hud-unit-a')?.addEventListener('click', () => this.cbs.stagedUnitA?.());
-    el.querySelector('#vk-hud-unit-b')?.addEventListener('click', () => this.cbs.stagedUnitB?.());
-    el.querySelector('#vk-hud-unit-c')?.addEventListener('click', () => this.cbs.stagedUnitC?.());
-    el.querySelector('#vk-hud-unit-d')?.addEventListener('click', () => this.cbs.stagedUnitD?.());
-  }
-
-  // ── CSS ──
 
   private ensureStyle(): void {
     if (document.getElementById(STYLE_ID)) return;
-    const s = document.createElement('style'); s.id = STYLE_ID;
-    s.textContent = `
-      #vk-hud { position: absolute; inset: 0; pointer-events: none; z-index: 50; overflow: hidden; }
-      #vk-hud-canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
-      #vk-hud-hit { position: absolute; inset: 0; pointer-events: none; }
-      .vk-hit { position: absolute; background: transparent; border: none; cursor: pointer; pointer-events: all; padding: 0; outline: none; }
-      .vk-hit:disabled { cursor: not-allowed; pointer-events: none; }
-      #${OVERLAY_ID} {
-        position: fixed; inset: 0; display: flex; align-items: center;
-        justify-content: center; background: rgba(2,5,12,0.85);
-        backdrop-filter: blur(8px); z-index: 110; font-family: Inter, sans-serif;
-      }
-      .vk-res-panel {
-        width: min(92vw, 360px); padding: 32px 24px;
-        border: 1px solid ${C.accentD}; background: linear-gradient(180deg, ${C.bg1}, ${C.bg3});
-        box-shadow: 0 40px 80px rgba(0,20,60,0.7);
-        display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
-        clip-path: polygon(10px 0%, 100% 0%, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0% 100%, 0% 10px);
-      }
-      .vk-res-panel::before {
-        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
-        background: linear-gradient(90deg, transparent, ${C.borderL}, transparent);
-      }
-      .vk-res-panel[data-r="lost"] { border-color: rgba(255,90,90,0.4); }
-      .vk-res-rune { font-size: 48px; color: ${C.accent}; text-shadow: 0 0 30px ${C.accent}; }
-      .vk-res-panel[data-r="lost"] .vk-res-rune { color: ${C.red}; text-shadow: 0 0 30px ${C.red}; }
-      .vk-res-k { margin: 0; color: ${C.textDim}; text-transform: uppercase; letter-spacing: 0.2em; font-size: 10px; font-weight: 700; }
-      .vk-res-t { margin: 0; font-family: Cinzel, serif; font-size: 40px; font-weight: 800; color: ${C.accentL}; text-shadow: 0 0 40px rgba(74,174,255,0.5); }
-      .vk-res-panel[data-r="lost"] .vk-res-t { color: ${C.red}; text-shadow: 0 0 40px rgba(255,90,90,0.5); }
-      .vk-res-d { margin: 0; color: ${C.textMid}; font-size: 13px; line-height: 1.6; }
-      .vk-res-btn {
-        margin-top: 6px; width: 100%; padding: 12px;
-        background: linear-gradient(180deg, #12283e, #0a1828);
-        color: ${C.accentL}; border: 1px solid ${C.accentD};
-        cursor: pointer; font-family: Cinzel, serif; font-size: 13px;
-        font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; transition: all 0.2s;
-        clip-path: polygon(6px 0%, 100% 0%, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0% 100%, 0% 6px);
-      }
-      .vk-res-btn:hover {
-        background: linear-gradient(180deg, #1a3858, #12283e);
-        border-color: ${C.accent}; box-shadow: 0 0 24px rgba(74,174,255,0.25); transform: translateY(-1px);
-      }
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #vk-hud{position:relative;width:100%;height:100%;padding:8px 10px;color:#e7eef6;font-family:"Bahnschrift","Trebuchet MS",sans-serif}
+      .vk-panel,.vk-panel-block,.vk-top-chip,.vk-command-card,.vk-oracle-stat,.vk-deck-message,.vk-focus-label,.vk-oracle-resource,.vk-alert-strip,.vk-res-panel{border:1px solid rgba(168,123,76,.24);background:linear-gradient(180deg,rgba(22,22,24,.96),rgba(8,8,10,.97))}
+      .vk-panel{box-shadow:inset 0 1px 0 rgba(255,226,182,.07),0 14px 26px rgba(0,0,0,.24)}
+      .vk-hud-deck{width:100%;height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:8px;padding:10px 12px;overflow:hidden}
+      .vk-hud-topline{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+      .vk-top-chip{padding:7px 10px;display:flex;flex-direction:column;gap:2px}
+      .vk-panel-kicker,.vk-top-chip-label{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#d1a06a}
+      .vk-top-chip strong,.vk-stat-value{font-size:14px;color:#f5f8fc}.vk-timer{color:#8de2ff!important}
+      .vk-hud-main{display:grid;grid-template-columns:minmax(270px,.9fr) minmax(260px,.85fr) minmax(380px,1.25fr);gap:10px;min-height:0}.vk-panel-block{min-width:0}
+      .vk-citadel-banner{display:flex;justify-content:space-between;gap:10px;padding:8px 12px;background:linear-gradient(180deg,rgba(69,63,56,.92),rgba(29,27,25,.98))}.vk-citadel-banner strong{font-family:"Copperplate Gothic Bold","Bahnschrift",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:#f0c17b}.vk-citadel-banner span{font-size:11px;color:#97aabd}
+      .vk-citadel-shell{display:grid;grid-template-columns:88px minmax(0,1fr);gap:14px;align-items:center;padding:14px}.vk-citadel-art{aspect-ratio:1;display:grid;place-items:center;background:radial-gradient(circle,rgba(100,190,255,.18),transparent 58%),linear-gradient(180deg,rgba(20,20,24,.96),rgba(7,8,10,.98))}.vk-citadel-art img{width:72px;height:72px;object-fit:contain;filter:drop-shadow(0 0 18px rgba(91,194,255,.3))}
+      .vk-citadel-copy{display:flex;flex-direction:column;gap:6px;min-width:0}
+      .vk-panel-title{margin:0;font-family:"Copperplate Gothic Bold","Bahnschrift",sans-serif;font-size:14px;letter-spacing:.07em;text-transform:uppercase;color:#f8fbff}.vk-health-readout{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.vk-health-state{font-size:11px;text-transform:uppercase;color:#8bc8ff}
+      .vk-health-track{height:9px;background:#05080c;overflow:hidden;margin:6px 0}.vk-health-fill{height:100%;background:linear-gradient(90deg,#4f8cff,#75d6ff 65%,#d7feff);transition:width .25s ease}.vk-mini-grid{display:flex;gap:18px;flex-wrap:wrap}.vk-mini-stat{display:flex;gap:8px;color:#93a7ba;font-size:11px}.vk-mini-stat strong{color:#eef7ff;font-size:12px}
+      .vk-oracle-block{display:grid;grid-template-rows:auto auto auto auto auto;gap:6px;padding:10px 12px 12px}.vk-oracle-head{display:flex;justify-content:flex-end;gap:10px;min-height:10px}.vk-oracle-eye{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle,rgba(144,238,255,.95) 0 20%,rgba(36,122,182,.88) 36%,rgba(5,18,29,.2) 72%,transparent 74%);box-shadow:0 0 18px rgba(116,219,255,.28);margin-top:0}
+      .vk-support-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:stretch;margin-top:-2px}.vk-support-card{position:relative;display:grid;grid-template-rows:auto auto minmax(34px,1fr) auto auto;gap:6px;min-height:140px;padding:12px 13px 11px;border:1px solid rgba(132,176,220,.18);background:
+        linear-gradient(180deg,rgba(26,33,44,.96) 0%,rgba(12,15,22,.98) 58%,rgba(8,10,16,.99) 100%);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.05), inset 0 -10px 24px rgba(38,90,148,.09), 0 10px 24px rgba(0,0,0,.18);overflow:hidden}
+      .vk-support-card::before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(116,219,255,.12),transparent 34%,transparent 66%,rgba(255,194,122,.08));pointer-events:none}
+      .vk-support-button{text-align:left;color:#eef6ff;cursor:pointer;transition:transform .15s,border-color .15s,box-shadow .15s}.vk-support-button:hover:not(:disabled){transform:translateY(-2px);border-color:rgba(123,221,255,.48);box-shadow:0 12px 22px rgba(0,0,0,.28)}.vk-support-button:disabled{opacity:.42;cursor:not-allowed}.vk-support-kicker{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:#d7a96e}.vk-support-name{font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#eef6ff;max-width:85%}.vk-support-desc{font-size:10px;line-height:1.4;color:#8fa5b8;align-self:start}.vk-support-cost{margin-top:auto;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#efc17f}.vk-support-status{display:block;padding-top:2px;font-size:10px;line-height:1.35;color:#89dfff}
+      .vk-deck-message,.vk-focus-label,.vk-oracle-resource,.vk-alert-strip{padding:9px 12px;font-size:11px;line-height:1.45}.vk-oracle-resource{color:#9dddff}.vk-oracle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.vk-oracle-stat{display:flex;flex-direction:column;gap:3px;padding:8px 10px}.vk-oracle-stat span{font-size:10px;text-transform:uppercase;color:#93a7ba}.vk-oracle-stat strong{font-size:13px;color:#eef7ff}
+      .vk-alert-strip{margin-top:2px;font-size:10px;color:#b8c8d7}
+      .vk-orders-block{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:8px 8px 6px;align-content:start;overflow:hidden}.vk-order-column{display:flex;flex-direction:column;min-width:0}.vk-order-column .vk-panel-kicker{font-size:8px;letter-spacing:.14em}.vk-order-column .vk-panel-title{font-size:12px;letter-spacing:.05em}.vk-command-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-top:5px}
+      .vk-command-card{position:relative;display:flex;flex-direction:column;gap:2px;min-height:60px;padding:8px 9px 7px;text-align:left;color:#eef6ff;cursor:pointer;transition:transform .15s,border-color .15s,box-shadow .15s;overflow:hidden}.vk-command-card:hover:not(:disabled){transform:translateY(-2px);border-color:rgba(123,221,255,.48);box-shadow:0 8px 18px rgba(0,0,0,.24)}.vk-command-card:disabled{opacity:.38;cursor:not-allowed}.vk-command-card.is-active,.vk-command-card[data-selected="true"]{border-color:rgba(130,229,255,.72);background:linear-gradient(180deg,rgba(36,52,72,.96),rgba(14,22,35,.98))}
+      .vk-card-key{position:absolute;top:7px;right:7px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;border:1px solid rgba(128,205,255,.25);background:#081018;color:#95dbff}.vk-card-name{font-family:"Copperplate Gothic Bold","Bahnschrift",sans-serif;font-size:9px;letter-spacing:.035em;text-transform:uppercase;padding-right:18px;line-height:1.15}.vk-card-desc{font-size:8px;line-height:1.15;color:#98aabe;padding-right:10px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;min-height:18px}.vk-card-cost{margin-top:auto;font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:#efc17f}
+      .vk-alert-strip.is-alert{border-color:rgba(255,132,132,.32);background:linear-gradient(180deg,rgba(58,20,16,.94),rgba(20,10,10,.96));color:#ffd9d9}
+      #${OVERLAY_ID}{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(2,7,12,.86);backdrop-filter:blur(12px);z-index:110}.vk-res-panel{width:min(92vw,420px);padding:34px 30px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;box-shadow:0 42px 110px rgba(0,0,0,.5)}.vk-res-rune{font-family:"Copperplate Gothic Bold","Bahnschrift",sans-serif;font-size:26px;letter-spacing:.2em;color:#93dfff}.vk-res-k{margin:0;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#d1a06a}.vk-res-t{margin:0;font-family:"Copperplate Gothic Bold","Bahnschrift",sans-serif;font-size:40px;text-transform:uppercase;color:#e0f1ff;letter-spacing:.1em}.vk-res-d{font-size:14px;line-height:1.6;color:#9cb7cf}.vk-res-btn{width:100%;padding:15px;border:1px solid rgba(170,126,77,.24);background:#14171d;color:#ecf7ff;cursor:pointer;font-family:"Bahnschrift","Trebuchet MS",sans-serif;font-size:13px;letter-spacing:.2em;text-transform:uppercase}
+      @media (max-width:1240px){.vk-hud-main{grid-template-columns:minmax(240px,.95fr) minmax(240px,.95fr) minmax(280px,1.1fr)}.vk-orders-block{grid-template-columns:1fr}}
+      @media (max-width:980px){#vk-hud{padding:6px}.vk-hud-deck{padding:8px}.vk-hud-topline{grid-template-columns:repeat(2,minmax(0,1fr))}.vk-hud-main{grid-template-columns:1fr}.vk-citadel-shell{grid-template-columns:64px minmax(0,1fr);gap:10px}.vk-citadel-art img{width:52px;height:52px}}
     `;
-    document.head.appendChild(s);
+    document.head.appendChild(style);
   }
+}
+
+function getLocalizedFocus(
+  mode: 'attack' | 'buff' | 'sell' | 'calm' | 'default',
+  enemiesAlive = 0,
+  enemiesQueued = 0,
+  towerCount = 0,
+  alliesAlive = 0,
+): string {
+  if (mode === 'attack') {
+    return getIsRu()
+      ? 'Фокус: Attack Tower заряжена. Закрой линию сейчас и накрой следующий натиск поддержкой.'
+      : 'Focus: Attack Tower armed. Lock a lane now, then layer support fire on the next push.';
+  }
+  if (mode === 'buff') {
+    return getIsRu()
+      ? 'Фокус: Buff Tower заряжена. Ставь её рядом с бойцами, чтобы усилить мили и поддержку.'
+      : 'Focus: Buff Tower armed. Place it near defenders to multiply melee pressure and support output.';
+  }
+  if (mode === 'sell') {
+    return getIsRu()
+      ? 'Фокус: режим разборки активен. Переработай башню и снова открой питание для поддержки и подкреплений.'
+      : 'Focus: Salvage Surge is active. The frontline stays empowered as long as the energy feed holds.';
+  }
+  if (mode === 'calm') {
+    return getIsRu()
+      ? 'Фокус: поле спокойно. Используй паузу, чтобы нарастить башни, воинов и готовность поддержки.'
+      : 'Focus: Field is calm. Use the lull to stack towers, warriors and support readiness before the next push.';
+  }
+  return getIsRu()
+    ? `Фокус: ${enemiesAlive} активны, ${enemiesQueued} в очереди. Поддержка считывает ${towerCount} башен и ${alliesAlive} защитников на линии.`
+    : `Focus: ${enemiesAlive} active, ${enemiesQueued} queued. Support systems are reading ${towerCount} towers and ${alliesAlive} defenders on the line.`;
+}
+
+function getLocalizedReserves(
+  mode: 'default' | 'starved' | 'salvage' | 'structures' | 'reinforcements' | 'full' | 'core',
+  resources: number,
+  crystals: number,
+  latfa: number,
+): string {
+  const prefix = `E ${resources}, C ${crystals}, L ${latfa}`;
+  switch (mode) {
+    case 'starved':
+      return getIsRu()
+        ? `Резервы: ${prefix}. Все основные приказы голодают. Держись, пока цитадель снова не заполнит сеть.`
+        : `Reserves: ${prefix}. All primary orders are starved. Hold until the citadel refills the grid.`;
+    case 'salvage':
+      return getIsRu()
+        ? `Резервы: ${prefix}. Новые приказы закрыты, но разборка может вернуть питание под поддержку.`
+        : `Reserves: ${prefix}. New orders are locked, but salvage can restore power for support.`;
+    case 'structures':
+      return getIsRu()
+        ? `Резервы: ${prefix}. Строительная сетка просела, так что держись на телах и таймингах поддержки.`
+        : `Reserves: ${prefix}. Structure grid is low, so lean on bodies and timed support windows.`;
+    case 'reinforcements':
+      return getIsRu()
+        ? `Резервы: ${prefix}. Очередь подкреплений сухая, но башни и поддержка ещё открыты.`
+        : `Reserves: ${prefix}. Reinforcement queue is dry, but towers and support posture remain open.`;
+    case 'full':
+      return getIsRu()
+        ? `Резервы: ${prefix}. Открыт полный стек команд: строй, усиливай, разбирай и зови поддержку.`
+        : `Reserves: ${prefix}. Full command stack is open: build, reinforce, salvage and support.`;
+    case 'core':
+      return getIsRu()
+        ? `Резервы: ${prefix}. Все базовые приказы на строительство и подкрепления доступны.`
+        : `Reserves: ${prefix}. Core build and reinforcement orders are all available.`;
+    default:
+      return getIsRu()
+        ? `Резервы: ${prefix}. Тактические системы под питанием и ждут следующей команды.`
+        : `Reserves: ${prefix}. Tactical systems are powered and waiting for the next commit.`;
+  }
+}
+
+function getLocalizedSupportStatus(
+  mode: 'buffReady' | 'buffIdle' | 'dropReady' | 'dropNeed' | 'rocketPrime' | 'rocketTrack' | 'heavyPrime' | 'heavyIdle',
+  value = 0,
+): string {
+  switch (mode) {
+    case 'buffReady':
+      return getIsRu()
+        ? `Бафф линии готов для ${value} активных защитников`
+        : `Line buff ready for ${value} active defenders`;
+    case 'buffIdle':
+      return getIsRu()
+        ? 'Нужны бойцы на фронте, иначе усиление не раскроется'
+        : 'Needs frontline units before the boost matters';
+    case 'dropReady':
+      return getIsRu()
+        ? 'Орбитальная линия открыта для капсул и шок-поддержки'
+        : 'Orbital lane open for capsule or shock support';
+    case 'dropNeed':
+      return getIsRu()
+        ? `Латфа ${value}/12. Сборщик должен принести ещё трофеев с поля`
+        : `Latfa ${value}/12. Collector must secure more field salvage`;
+    case 'rocketPrime':
+      return getIsRu()
+        ? `Главная рой-цель: ${value} врагов в боевой зоне`
+        : `Prime swarm target: ${value} hostiles in the battlespace`;
+    case 'rocketTrack':
+      return getIsRu()
+        ? `Рой собирается. Отслеживается ${value} вражеских целей`
+        : `Swarm pattern forming. ${value} total hostiles tracked`;
+    case 'heavyPrime':
+      return getIsRu()
+        ? 'Тяжёлый канал рекомендован. Решение для массивного оружия оправдано'
+        : 'Heavy channel advised. Massive weapon solution is justified';
+    default:
+      return getIsRu()
+        ? 'Тяжёлый канал держится в резерве под элиту, броню и давление босса'
+        : 'Heavy lane held in reserve for elites, armor or boss pressure';
+  }
+}
+
+function getSupportStatusLabel(cooldown: number, readyText: string): string {
+  if (cooldown > 0.05) {
+    return t('support.cooling', { seconds: Math.ceil(cooldown) });
+  }
+  return `${t('support.ready')} - ${readyText}`;
+}
+
+void getLocalizedReserves;
+void getLocalizedSupportStatus;
+
+function getIsRu(): boolean {
+  return getLanguage() === 'ru';
 }

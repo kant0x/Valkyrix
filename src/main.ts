@@ -676,24 +676,25 @@ function configureGameHud(hud: HudOverlay): void {
         },
         buff: () => {
             selectedSupportTargeting = null;
-            selectedTowerType = selectedTowerType === 'buff' ? null : 'buff';
+            selectedTowerType = null;
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
-            hud.setBuildSelection(selectedTowerType);
-            hud.setCommandMessage(
-                selectedTowerType === 'buff'
-                    ? t('game.buffSelected')
-                    : t('game.buffDeselected'),
-            );
+            hud.setBuildSelection(null);
+            hud.setCommandMessage(t('game.buffDeselected'));
         },
         sell: () => {
+            if (!gameState) {
+                hud.setCommandMessage(t('game.battleLoading'));
+                return;
+            }
+            selectedTowerType = null;
             selectedSupportTargeting = null;
-            selectedTowerType = selectedTowerType === 'sell' ? null : 'sell';
+            gameState.salvageModeActive = !gameState.salvageModeActive;
             runtime.hoverBuildTile = null;
             syncCanvasCursor();
-            hud.setBuildSelection(selectedTowerType);
+            hud.setBuildSelection(gameState.salvageModeActive ? 'sell' : null);
             hud.setCommandMessage(
-                selectedTowerType === 'sell'
+                gameState.salvageModeActive
                     ? t('game.salvageSelected')
                     : t('game.salvageDeselected'),
             );
@@ -794,40 +795,6 @@ function createTowerPlacementHandler(hud: HudOverlay): (event: MouseEvent) => vo
             return;
         }
         if (!selectedTowerType) return;
-        if (selectedTowerType === 'sell') {
-            const clickedTile = canvasClickToTile(
-                localX,
-                localY,
-                canvas,
-                runtime.cameraCenter,
-                runtime.zoom,
-                map.tileWidth,
-                map.tileHeight,
-            );
-            const target = gameState.buildings.find((building) => (
-                building.tileCol === clickedTile.col && building.tileRow === clickedTile.row
-            ));
-            if (!target) {
-                hud.setCommandMessage(t('game.salvageClick'));
-                return;
-            }
-
-            const refunded = target.type === 'attack' ? 30 : 24;
-            const sold = buildingSystem?.sellBuilding(target.id, gameState) ?? false;
-            if (!sold) {
-                hud.setCommandMessage('Tower salvage failed. Try again.');
-                return;
-            }
-
-            runtime.status = `${target.type === 'attack' ? 'Attack' : 'Buff'} tower salvaged at ${clickedTile.col},${clickedTile.row}.`;
-            hud.setCommandMessage(t('game.salvaged', { tower: target.type === 'attack' ? 'Attack' : 'Support', energy: refunded }));
-            selectedTowerType = null;
-            runtime.hoverBuildTile = null;
-            syncCanvasCursor();
-            hud.setBuildSelection(null);
-            return;
-        }
-
         const zoneLayer = map.layers?.zones ?? [];
         const hoveredTile = runtime.hoverBuildTile;
         if (!hoveredTile) {
@@ -1274,8 +1241,8 @@ function update(dt: number): void {
         const enemyKilledTotal = sidePanel.reconcileBattleState(gameState);
         gameScreenHudRef?.setActionAvailability({
             attack: gameState.resources >= 50,
-            buff: gameState.resources >= 40,
-            sell: gameState.buildings.length > 0,
+            buff: false,
+            sell: gameState.salvageModeActive || gameState.resources > 0,
         });
         gameScreenHudRef?.update({
             wave: gameState.waveNumber,
@@ -1285,14 +1252,14 @@ function update(dt: number): void {
             crystals: gameState.crystals ?? 0,
             latfa: gameState.latfa ?? 0,
             schematics: gameState.schematics ?? 0,
-            armedAction: selectedTowerType,
+            armedAction: selectedTowerType ?? (gameState.salvageModeActive ? 'sell' : null),
             waveTimer: gameState.waveTimer,
             enemiesAlive: enemyUnits.length,
             enemiesQueued: queuedEnemyCount,
             alliesAlive: gameState.units.filter(u => u.faction === 'ally').length,
             towerCount: gameState.buildings.length,
             enemiesKilled: enemyKilledTotal,
-            canSalvage: gameState.buildings.length > 0,
+            canSalvage: gameState.salvageModeActive || gameState.resources > 0,
             canAffordViking: canRecruitUnit('light-ally', gameState),
             canAffordCollector: canRecruitUnit('collector', gameState),
             canAffordCybernetic: canRecruitUnit('cybernetic', gameState),

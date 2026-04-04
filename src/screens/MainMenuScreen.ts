@@ -1,17 +1,20 @@
 // src/screens/MainMenuScreen.ts
 import type { ScreenModule, ScreenManager } from './ScreenManager';
-import { SessionLayer } from '../session/SessionLayer';
+import { requestBattleSessionMode } from '../blockchain/BattleSessionState';
+import { getCurrentState } from '../wallet/WalletService';
+import { t } from '../i18n/localization';
 
 const STYLE_ID = 'vk-main-menu-style';
+type SessionConnectLike = { connect(): Promise<void> };
 
 export class MainMenuScreen implements ScreenModule {
   private el: HTMLElement | null = null;
   private readonly manager: ScreenManager;
-  private readonly session: SessionLayer;
+  private readonly session: SessionConnectLike | null;
 
-  constructor(manager: ScreenManager, session?: SessionLayer) {
+  constructor(manager: ScreenManager, session?: SessionConnectLike) {
     this.manager = manager;
-    this.session = session ?? new SessionLayer();
+    this.session = session ?? null;
   }
 
   mount(container: HTMLElement): void {
@@ -23,8 +26,8 @@ export class MainMenuScreen implements ScreenModule {
       <div class="vk-menu-inner">
         <h1 class="vk-menu-title">VALKYRIX</h1>
         <div class="vk-menu-buttons">
-          <button id="btn-play" class="vk-menu-btn">Play</button>
-          <button id="btn-leaderboard" class="vk-menu-btn">Leaderboard</button>
+          <button id="btn-play" class="vk-menu-btn">${t('menu.play')}</button>
+          <button id="btn-leaderboard" class="vk-menu-btn">${t('menu.leaderboard')}</button>
         </div>
         <p id="vk-menu-status" class="vk-menu-status" style="display:none"></p>
       </div>
@@ -47,26 +50,72 @@ export class MainMenuScreen implements ScreenModule {
     playBtn?.addEventListener('click', async () => {
       if (!playBtn) return;
       playBtn.disabled = true;
-      playBtn.textContent = 'Connecting...';
+      playBtn.textContent = t('wallet.connecting');
       if (statusEl) {
-        statusEl.textContent = 'Connecting to MagicBlock devnet\u2026';
+        statusEl.textContent = t('menu.statusConnect');
         statusEl.style.display = 'block';
       }
       try {
-        await this.session.connect();
+        const wallet = getCurrentState();
+        if (!wallet.connected || !wallet.publicKey) {
+          throw new Error(t('game.connectWalletFirst'));
+        }
+        const mode = requestBattleSessionMode();
+        if (mode === 'cheap-tx') {
+          if (this.session) {
+            await this.session.connect();
+          } else {
+            const { SessionLayer } = await import('../session/SessionLayer');
+            await new SessionLayer().connect();
+          }
+        }
         this.manager.navigateTo('game');
       } catch (err) {
         playBtn.disabled = false;
-        playBtn.textContent = 'Play';
+        playBtn.textContent = t('menu.play');
         if (statusEl) {
-          statusEl.textContent = err instanceof Error ? err.message : 'Connection failed';
+          statusEl.textContent = err instanceof Error && err.name === 'ChainUnavailableError'
+            ? err.message
+            : err instanceof Error
+            ? err.message
+            : t('menu.statusConnectFailed');
         }
       }
     });
 
-    // TODO Phase 5: navigate to leaderboard screen (reads blockchain data)
     leaderboardBtn?.addEventListener('click', () => {
-      this.manager.navigateTo('game');
+      void (async () => {
+        if (!leaderboardBtn) return;
+        leaderboardBtn.disabled = true;
+        leaderboardBtn.textContent = t('common.loading');
+        if (statusEl) {
+          statusEl.textContent = t('menu.statusLeaderboard');
+          statusEl.style.display = 'block';
+        }
+
+        try {
+          const { publicKey } = getCurrentState();
+          const [{ LeaderboardService }, { LeaderboardOverlay }] = await Promise.all([
+            import('../blockchain/LeaderboardService'),
+            import('./LeaderboardOverlay'),
+          ]);
+          const overlay = new LeaderboardOverlay();
+          overlay.setCurrentWallet(publicKey);
+          const entries = publicKey
+            ? await new LeaderboardService().fetchLeaderboard(publicKey)
+            : [];
+          overlay.show(entries);
+          if (statusEl) statusEl.style.display = 'none';
+        } catch (err) {
+          if (statusEl) {
+            statusEl.textContent = err instanceof Error ? err.message : t('menu.statusLeaderboardFailed');
+            statusEl.style.display = 'block';
+          }
+        } finally {
+          leaderboardBtn.disabled = false;
+          leaderboardBtn.textContent = t('menu.leaderboard');
+        }
+      })();
     });
   }
 

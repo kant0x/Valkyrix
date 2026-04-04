@@ -10,7 +10,7 @@ valkyrix_ledger = "NkxXENw6u1jWc8iUo28M9NiDVEcoUdqGiGZ3TyNf9Xn"
 
 [provider]
 cluster = "Devnet"
-wallet = "C:/Users/Kant/.config/solana/deploy-keypair.json"
+wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "cargo test --manifest-path ./Cargo.toml -- --nocapture"

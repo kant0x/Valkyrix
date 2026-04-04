@@ -11,8 +11,11 @@ export interface SolanaProvider {
   publicKey: { toString(): string } | null;
   isConnected: boolean;
   connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toString(): string } }>;
+  request?(args: { method: string; params?: unknown }): Promise<unknown>;
   disconnect(): Promise<void>;
-  on(event: 'connect' | 'disconnect' | 'accountChanged', handler: (arg?: unknown) => void): void;
+  on?(event: 'connect' | 'disconnect' | 'accountChanged', handler: (arg?: unknown) => void): void;
+  signTransaction?<T>(tx: T): Promise<T>;
+  signAllTransactions?<T>(txs: T[]): Promise<T[]>;
   signAndSendTransaction(tx: unknown): Promise<{ signature: string }>;
 }
 

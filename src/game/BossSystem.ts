@@ -1,16 +1,18 @@
 import type { GameState, Unit } from './game.types';
 import { UNIT_DEFS } from './game.types';
 import { NegotiationOverlay } from '../screens/NegotiationOverlay';
+import type { BlockchainService } from '../blockchain/BlockchainService';
+import { getCurrentState } from '../wallet/WalletService';
 
-const BOSS_TRIGGER_SECONDS = 10;
+export const BOSS_TRIGGER_SECONDS = 120;
 export const NEGOTIATION_RESOURCE_REWARD = 120;
 export const NEGOTIATION_HP_REWARD = 400;
 export const NEGOTIATION_WAVE_TIMER_FLOOR = 20;
 
 /** Horde spawned on negotiation failure — NO light-enemy. */
 const HORDE_COMPOSITION: Record<string, number> = {
-  'heavy-enemy': 8,
-  'ranged-enemy': 6,
+  'heavy-enemy': 5,
+  'ranged-enemy': 4,
 };
 
 const HORDE_FIRST_DELAY = 1.0;
@@ -27,10 +29,15 @@ const HORDE_DELAY_STEP = 0.4;
  */
 export class BossSystem {
   private overlay: NegotiationOverlay | null = null;
+  private blockchainService?: BlockchainService;
+
+  setBlockchainService(service: BlockchainService): void {
+    this.blockchainService = service;
+  }
 
   /**
    * Called each game tick while phase === 'playing'.
-   * Accumulates state.elapsed; triggers boss negotiation at >= 300 s.
+   * Accumulates state.elapsed; triggers boss negotiation at >= 120 s.
    */
   update(dt: number, state: GameState, container: HTMLElement | null): void {
     // Accumulate elapsed time
@@ -104,6 +111,8 @@ export class BossSystem {
     if (state.bossNegotiation) {
       state.bossNegotiation = { ...state.bossNegotiation, active: false, outcome: 'success' };
     }
+    const { publicKey } = getCurrentState();
+    this.blockchainService?.recordBossOutcome('negotiated', publicKey).catch(() => {});
 
     this.cleanup();
   }

@@ -34,7 +34,11 @@ describe('SessionLayer', () => {
   it('isConnected is true after successful connect()', async () => {
     const { SessionLayer } = await import('./SessionLayer');
     const getSlot = vi.fn(async () => 1);
-    const layer = new SessionLayer(async () => ({ getSlot }));
+    const getLatestBlockhash = vi.fn(async () => ({
+      blockhash: 'mock',
+      lastValidBlockHeight: 1,
+    }));
+    const layer = new SessionLayer(async () => ({ getSlot, getLatestBlockhash }));
 
     await layer.connect();
 
@@ -47,6 +51,9 @@ describe('SessionLayer', () => {
       getSlot: vi.fn(async () => {
         throw new Error('offline');
       }),
+      getLatestBlockhash: vi.fn(async () => {
+        throw new Error('offline');
+      }),
     }));
 
     await expect(layer.connect()).rejects.toThrow();
@@ -56,17 +63,43 @@ describe('SessionLayer', () => {
   it('connect warms up the router through getSlot', async () => {
     const { SessionLayer } = await import('./SessionLayer');
     const getSlot = vi.fn(async () => 1);
-    const layer = new SessionLayer(async () => ({ getSlot }));
+    const getLatestBlockhash = vi.fn(async () => ({
+      blockhash: 'mock',
+      lastValidBlockHeight: 1,
+    }));
+    const layer = new SessionLayer(async () => ({ getSlot, getLatestBlockhash }));
 
     await layer.connect();
 
     expect(getSlot).toHaveBeenCalledTimes(1);
+    expect(getLatestBlockhash).not.toHaveBeenCalled();
+  });
+
+  it('connect falls back to getLatestBlockhash when getSlot rejects', async () => {
+    const { SessionLayer } = await import('./SessionLayer');
+    const getSlot = vi.fn(async () => {
+      throw new Error('slot unsupported');
+    });
+    const getLatestBlockhash = vi.fn(async () => ({
+      blockhash: 'mock',
+      lastValidBlockHeight: 1,
+    }));
+    const layer = new SessionLayer(async () => ({ getSlot, getLatestBlockhash }));
+
+    await layer.connect();
+
+    expect(getSlot).toHaveBeenCalledTimes(1);
+    expect(getLatestBlockhash).toHaveBeenCalledTimes(1);
+    expect(layer.isConnected).toBe(true);
   });
 
   it('connect throws ChainUnavailableError when getSlot rejects', async () => {
     const { SessionLayer, ChainUnavailableError } = await import('./SessionLayer');
     const layer = new SessionLayer(async () => ({
       getSlot: vi.fn(async () => {
+        throw new Error('offline');
+      }),
+      getLatestBlockhash: vi.fn(async () => {
         throw new Error('offline');
       }),
     }));
@@ -79,10 +112,14 @@ describe('SessionLayer', () => {
     const { SessionLayer, ChainUnavailableError } = await import('./SessionLayer');
     const layer = new SessionLayer(async () => ({
       getSlot: vi.fn(() => new Promise<number>(() => undefined)),
+      getLatestBlockhash: vi.fn(async () => ({
+        blockhash: 'mock',
+        lastValidBlockHeight: 1,
+      })),
     }));
 
     const pending = expect(layer.connect()).rejects.toBeInstanceOf(ChainUnavailableError);
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(12000);
 
     await pending;
   });

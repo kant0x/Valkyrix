@@ -19,6 +19,10 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     playerBaseMaxHp: 300,
     resources: 100,
     crystals: 0,
+    latfa: 0,
+    latfaDrops: [],
+    dropPods: [],
+    cyberneticCallTimestamps: [],
     nextId: 1,
     pathNodes: [
       { wx: 0, wy: 0 },
@@ -77,6 +81,30 @@ describe('UnitSystemRuntime', () => {
 
     expect(state.units[0].wx).toBeLessThan(220);
     expect(state.units[0].wy).toBeGreaterThan(-40);
+  });
+
+  it('resyncs a displaced melee unit to its current path progress instead of snapping back after combat', () => {
+    const state = makeState({
+      units: [
+        makeUnit({
+          id: 21,
+          def: UNIT_DEFS['light-enemy'],
+          faction: 'enemy',
+          state: 'moving',
+          pathIndex: 0,
+          pathT: 0,
+          wx: 120,
+          wy: 0,
+        }),
+      ],
+    });
+    const system = new UnitSystem();
+
+    system.update(0.1, state);
+
+    expect(state.units[0].wx).toBeGreaterThan(120);
+    expect(state.units[0].wx).toBeLessThan(130);
+    expect(state.units[0].pathIndex).toBe(1);
   });
 
   it('applies spawnQueue power scaling to spawned units', () => {
@@ -188,5 +216,119 @@ describe('UnitSystemRuntime', () => {
     const after = Math.hypot(state.units[0].wx - anchor.wx, state.units[0].wy - anchor.wy);
     expect(after).toBeLessThan(before);
     expect(after).toBeLessThan(170);
+  });
+
+  it('has collectors gather latfa drops from the field', () => {
+    const state = makeState({
+      crystals: 0,
+      latfa: 0,
+      latfaDrops: [{ id: 90, wx: 230, wy: -32, value: 2, kind: 'latfa' }],
+      units: [makeUnit({
+        def: UNIT_DEFS.collector,
+        hp: UNIT_DEFS.collector.hp,
+        wx: 225,
+        wy: -35,
+      })],
+    });
+    const system = new UnitSystem();
+
+    system.update(0.2, state);
+
+    expect(state.latfa).toBe(2);
+    expect(state.latfaDrops).toHaveLength(0);
+  });
+
+  it('sends different collectors to different salvage drops when multiple drops exist', () => {
+    const collectorA = makeUnit({
+      id: 90,
+      def: UNIT_DEFS.collector,
+      hp: UNIT_DEFS.collector.hp,
+      wx: 220,
+      wy: -40,
+    });
+    const collectorB = makeUnit({
+      id: 91,
+      def: UNIT_DEFS.collector,
+      hp: UNIT_DEFS.collector.hp,
+      wx: 228,
+      wy: -36,
+    });
+    const state = makeState({
+      latfaDrops: [
+        { id: 1, wx: 240, wy: -30, value: 2, kind: 'latfa' },
+        { id: 2, wx: 320, wy: -10, value: 2, kind: 'latfa' },
+      ],
+      units: [collectorA, collectorB],
+    });
+    const system = new UnitSystem();
+
+    system.update(0.5, state);
+
+    const updatedA = state.units.find((unit) => unit.id === 90)!;
+    const updatedB = state.units.find((unit) => unit.id === 91)!;
+    expect(updatedA.wx).toBeLessThan(updatedB.wx);
+    expect(updatedA.wx).toBeGreaterThan(220);
+    expect(updatedB.wx).toBeGreaterThan(228);
+  });
+
+  it('activates the collector guard field for 15 seconds when enemies get too close', () => {
+    const state = makeState({
+      units: [
+        makeUnit({
+          id: 30,
+          def: UNIT_DEFS.collector,
+          hp: UNIT_DEFS.collector.hp,
+          wx: 225,
+          wy: -32,
+        }),
+        makeUnit({
+          id: 31,
+          def: UNIT_DEFS['light-enemy'],
+          faction: 'enemy',
+          hp: UNIT_DEFS['light-enemy'].hp,
+          wx: 230,
+          wy: -28,
+        }),
+      ],
+    });
+    const system = new UnitSystem();
+
+    system.update(0.1, state);
+
+    expect(state.units[0].collectorShield).toBeCloseTo(15);
+  });
+
+  it('deploys three cybernetics from a finished drop pod', () => {
+    const state = makeState({
+      dropPods: [{ id: 44, wx: 220, wy: -40, anchorWx: 220, anchorWy: -16, elapsed: 2.8, spawnCount: 3, releasedCount: 0 }],
+    });
+    const system = new UnitSystem();
+
+    system.update(0.05, state);
+
+    const cybernetics = state.units.filter((unit) => unit.def.sprite === 'cybernetic');
+    expect(cybernetics).toHaveLength(3);
+    expect(cybernetics.every((unit) => (unit.spawnShield ?? 0) > 0)).toBe(true);
+    expect(state.dropPods?.[0].releasedCount).toBe(3);
+  });
+
+  it('keeps cybernetics on the capsule landing segment instead of snapping back to the citadel gate', () => {
+    const state = makeState({
+      allyPathNodes: [
+        { wx: 220, wy: -40 },
+        { wx: 160, wy: 0 },
+        { wx: 100, wy: 0 },
+        { wx: 40, wy: 0 },
+      ],
+      dropPods: [{ id: 45, wx: 98, wy: -4, anchorWx: 100, anchorWy: 0, elapsed: 2.8, spawnCount: 3, releasedCount: 0 }],
+    });
+    const system = new UnitSystem();
+
+    system.update(0.05, state);
+
+    const cybernetic = state.units.find((unit) => unit.def.sprite === 'cybernetic');
+    expect(cybernetic).toBeTruthy();
+    expect(cybernetic!.pathIndex).toBeGreaterThan(0);
+    expect(cybernetic!.wx).toBeLessThan(130);
   });
 });

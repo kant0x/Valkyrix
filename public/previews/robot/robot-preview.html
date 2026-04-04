@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>SciFi Building — Door Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0f1a; overflow: hidden; font-family: monospace; }
+    canvas { display: block; }
+    #info {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      color: #44ccff; font-size: 12px; letter-spacing: 3px;
+      text-shadow: 0 0 10px #44ccff66; pointer-events: none;
+    }
+    #hint {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+      color: #ffffff44; font-size: 11px; letter-spacing: 1px; text-align: center;
+    }
+    #toolbar {
+      position: fixed; top: 14px; right: 14px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .btn {
+      background: #ffffff0a; border: 1px solid #44ccff33;
+      color: #88bbcc; font-family: monospace; font-size: 11px;
+      padding: 6px 14px; cursor: pointer; letter-spacing: 1px;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #44ccff15; border-color: #44ccff88; color: #44ccff; }
+    .btn.active { background: #44ccff22; border-color: #44ccff; color: #44ccff; }
+    .btn.open { background: #44ff8822; border-color: #44ff88; color: #44ff88; }
+    #door-status {
+      position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+      color: #44ccff88; font-size: 11px; letter-spacing: 2px;
+      transition: opacity 0.5s;
+    }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: #0d0f1a; color: #44ccff; font-size: 13px; letter-spacing: 2px;
+      flex-direction: column; gap: 12px; z-index: 10;
+    }
+    #progress { width: 180px; height: 2px; background: #ffffff11; }
+    #progress-bar { height: 100%; background: #44ccff; width: 0%; transition: width 0.2s; }
+    #pick-hint {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      color: #ffcc44; font-size: 12px; letter-spacing: 2px; pointer-events: none;
+      display: none; text-shadow: 0 0 8px #ffcc44;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div>LOADING MODEL...</div>
+    <div id="progress"><div id="progress-bar"></div></div>
+  </div>
+  <div id="info" style="display:none">SCIFI BUILDING — DOOR DEMO</div>
+  <div id="hint" style="display:none">
+    drag: rotate &nbsp;·&nbsp; scroll: zoom &nbsp;·&nbsp; <b style="color:#44ccff">E</b>: open/close door &nbsp;·&nbsp; <b style="color:#ffcc44">P</b>: place door manually
+  </div>
+  <div id="door-status"></div>
+  <div id="pick-hint">CLICK ON THE BUILDING TO PLACE THE DOOR</div>
+  <div id="toolbar" style="display:none">
+    <button class="btn" id="btn-door" onclick="toggleDoor()">[ E ]  OPEN DOOR</button>
+    <button class="btn" id="btn-pick" onclick="startPick()">[ P ]  PLACE DOOR</button>
+    <button class="btn" onclick="resetCamera()">RESET VIEW</button>
+    <button class="btn" onclick="toggleAutoRotate()" id="btn-auto">AUTO ROTATE</button>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+// ─── Setup ───────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0f1a);
+scene.fog = new THREE.FogExp2(0x0d0f1a, 0.02);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 500);
+camera.position.set(4, 3, 5);
+
+// Lights
+scene.add(new THREE.AmbientLight(0x223366, 3));
+const key = new THREE.DirectionalLight(0x88aaff, 5);
+key.position.set(-4, 8, 5); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 0.1; key.shadow.camera.far = 50;
+[-8,8,-8,8].forEach((v,i) => {
+  if (i<2) key.shadow.camera.left = v; else key.shadow.camera.right = v;
+});
+key.shadow.camera.top = 10; key.shadow.camera.bottom = -5;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x44ccff, 2.5);
+rim.position.set(4, 3, -5); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xff3355, 0.8);
+fill.position.set(-3, 0, 3); scene.add(fill);
+const glowPt = new THREE.PointLight(0x44ccff, 1.5, 10);
+glowPt.position.set(0, 1, 3); scene.add(glowPt);
+
+// Floor
+const grid = new THREE.GridHelper(24, 24, 0x44ccff15, 0x44ccff08);
+scene.add(grid);
+const floorMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(24, 24),
+  new THREE.MeshStandardMaterial({ color: 0x06080f, roughness: 0.95 })
+);
+floorMesh.rotation.x = -Math.PI / 2;
+floorMesh.receiveShadow = true;
+scene.add(floorMesh);
+
+// ─── Door System ─────────────────────────────────────────────────────────────
+// Door config — can be repositioned via PLACE DOOR mode
+const door = {
+  // World-space anchor point (center-bottom of door)
+  pos:    new THREE.Vector3(0, 0, 1.72),  // front face Z ~ +1.69
+  normal: new THREE.Vector3(0, 0, 1),     // facing +Z
+  width:  0.9,
+  height: 1.8,
+
+  panelL: null,   // THREE.Mesh
+  panelR: null,
+  glowL:  null,   // edge glow line
+  glowR:  null,
+  group:  null,   // THREE.Group containing all door parts
+
+  open: false,
+  t: 0,           // 0 = closed, 1 = fully open
+  target: 0,
+  speed: 2.2,     // units per second
+
+  // How far each panel slides (half-width + a bit so fully clear)
+  slideAmt() { return this.width * 0.52; },
+};
+
+function buildDoorMeshes() {
+  if (door.group) { scene.remove(door.group); door.group.traverse(c => { if (c.geometry) c.geometry.dispose(); }); }
+
+  const group = new THREE.Group();
+  const hw = door.width / 2;
+  const h  = door.height;
+
+  // Panel geometry
+  const panGeo = new THREE.BoxGeometry(hw, h, 0.04);
+
+  // Panel material — dark metallic + slight emissive edge
+  const panMat = new THREE.MeshStandardMaterial({
+    color: 0x1a2a3a,
+    roughness: 0.3,
+    metalness: 0.9,
+    emissive: new THREE.Color(0x0a1a2a),
+    emissiveIntensity: 0.4,
+  });
+
+  // Panel stripe detail
+  const stripeMat = new THREE.MeshStandardMaterial({
+    color: 0x223344,
+    roughness: 0.4, metalness: 0.95,
+  });
+
+  // Left panel
+  const panL = new THREE.Mesh(panGeo, panMat);
+  panL.castShadow = true;
+  panL.receiveShadow = true;
+  panL.position.set(-hw / 2, h / 2, 0);
+
+  // Right panel
+  const panR = new THREE.Mesh(panGeo, panMat);
+  panR.castShadow = true;
+  panR.receiveShadow = true;
+  panR.position.set(hw / 2, h / 2, 0);
+
+  // Glow edges (thin box along the inner vertical edge)
+  const edgeGeo = new THREE.BoxGeometry(0.025, h, 0.06);
+  const edgeMat = new THREE.MeshStandardMaterial({
+    color: 0x44ccff, emissive: 0x44ccff, emissiveIntensity: 2,
+    roughness: 0.1, metalness: 0.2,
+  });
+  const edgeL = new THREE.Mesh(edgeGeo, edgeMat);
+  edgeL.position.set(0, h / 2, 0.01);  // center of left panel's right edge
+  panL.add(edgeL);
+
+  const edgeR = new THREE.Mesh(edgeGeo, edgeMat);
+  edgeR.position.set(0, h / 2, 0.01);
+  panR.add(edgeR);
+
+  // Horizontal stripe details on each panel
+  for (let i = 0; i < 4; i++) {
+    const sy = 0.3 + i * 0.35;
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(hw * 0.8, 0.025, 0.06), stripeMat);
+    stripe.position.set(0, sy, 0.025);
+    panL.add(stripe.clone()); panR.add(stripe.clone());
+  }
+
+  // Top frame bar
+  const topBar = new THREE.Mesh(new THREE.BoxGeometry(door.width + 0.1, 0.08, 0.06), stripeMat);
+  topBar.position.set(0, h + 0.04, 0);
+  group.add(topBar);
+
+  // Bottom threshold
+  const thresh = new THREE.Mesh(new THREE.BoxGeometry(door.width + 0.1, 0.04, 0.08), edgeMat);
+  thresh.position.set(0, 0.02, 0);
+  group.add(thresh);
+
+  // Light cone effect (points into room when open)
+  const coneGeo = new THREE.ConeGeometry(0.4, 1.5, 16, 1, true);
+  const coneMat = new THREE.MeshBasicMaterial({ color: 0x44ccff, transparent: true, opacity: 0, side: THREE.DoubleSide });
+  const cone = new THREE.Mesh(coneGeo, coneMat);
+  cone.rotation.x = -Math.PI / 2;
+  cone.position.set(0, 0.9, -0.5);
+  group.add(cone);
+  door.lightCone = cone;
+  door.lightConeMat = coneMat;
+
+  group.add(panL);
+  group.add(panR);
+
+  // Position group at door anchor
+  group.position.copy(door.pos);
+  // Align to normal direction
+  if (Math.abs(door.normal.z) > 0.5) {
+    group.rotation.y = door.normal.z > 0 ? 0 : Math.PI;
+  } else {
+    group.rotation.y = Math.atan2(door.normal.x, door.normal.z);
+  }
+
+  scene.add(group);
+  door.group  = group;
+  door.panelL = panL;
+  door.panelR = panR;
+  door.edgeMats = [edgeMat, edgeMat.clone()];
+  panR.children[0].material = door.edgeMats[1];
+
+  // Snap to current t
+  updateDoorPose(door.t);
+}
+
+function updateDoorPose(t) {
+  if (!door.panelL) return;
+  const slide = door.slideAmt() * t;
+  const hw = door.width / 2;
+  door.panelL.position.x = -hw / 2 - slide;
+  door.panelR.position.x =  hw / 2 + slide;
+
+  // Glow intensifies when open
+  const glow = 1.5 + t * 3;
+  door.edgeMats.forEach(m => m.emissiveIntensity = glow);
+
+  // Light cone opacity
+  if (door.lightConeMat) door.lightConeMat.opacity = t * 0.08;
+}
+
+window.toggleDoor = () => {
+  door.open = !door.open;
+  door.target = door.open ? 1 : 0;
+  const btn = document.getElementById('btn-door');
+  btn.textContent = door.open ? '[ E ]  CLOSE DOOR' : '[ E ]  OPEN DOOR';
+  btn.className = door.open ? 'btn open' : 'btn';
+  showStatus(door.open ? 'DOOR OPENED' : 'DOOR CLOSED');
+};
+
+function showStatus(msg) {
+  const el = document.getElementById('door-status');
+  el.textContent = msg;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.style.opacity = '0', 1800);
+}
+
+// ─── PICK MODE — click building to reposition door ───────────────────────────
+let pickMode = false;
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let buildingMesh = null;
+
+window.startPick = () => {
+  pickMode = true;
+  document.getElementById('pick-hint').style.display = 'block';
+  document.getElementById('btn-pick').classList.add('active');
+};
+
+function onPickClick(event) {
+  if (!pickMode || !buildingMesh) return;
+  mouse.x = (event.clientX / innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(buildingMesh, true);
+  if (hits.length > 0) {
+    const hit = hits[0];
+    // Snap to bottom of hit face
+    door.pos.set(hit.point.x, 0, hit.point.z);
+    door.normal.copy(hit.face.normal).transformDirection(buildingMesh.matrixWorld).normalize();
+    // Reposition slightly in front of surface
+    door.pos.addScaledVector(door.normal, 0.05);
+    buildDoorMeshes();
+    pickMode = false;
+    document.getElementById('pick-hint').style.display = 'none';
+    document.getElementById('btn-pick').classList.remove('active');
+    showStatus('DOOR PLACED');
+  }
+}
+
+// ─── Load model ──────────────────────────────────────────────────────────────
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/libs/draco/');
+const loader = new GLTFLoader();
+loader.setDRACOLoader(dracoLoader);
+
+loader.load('./scifibuilding.glb',
+  (gltf) => {
+    const model = gltf.scene;
+    // Center model
+    const box3 = new THREE.Box3().setFromObject(model);
+    const center = box3.getCenter(new THREE.Vector3());
+    const size   = box3.getSize(new THREE.Vector3());
+    model.position.sub(center);
+    model.position.y += size.y / 2; // sit on ground
+    model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; buildingMesh = c; } });
+    scene.add(model);
+
+    // Set camera
+    const d = Math.max(size.x, size.z) * 1.3;
+    camRadius = d + 2;
+    camera.position.set(0, size.y * 0.6, camRadius);
+    camTarget.set(0, size.y * 0.4, 0);
+
+    // Build initial door on front face (max Z of building, centered)
+    door.pos.set(0, 0, size.z / 2 + 0.05);
+    door.normal.set(0, 0, 1);
+    buildDoorMeshes();
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('info').style.display = 'block';
+    document.getElementById('hint').style.display = 'block';
+    document.getElementById('toolbar').style.display = 'flex';
+  },
+  (xhr) => { if (xhr.total) document.getElementById('progress-bar').style.width = (xhr.loaded/xhr.total*100)+'%'; },
+  (err) => { document.getElementById('loading').innerHTML = `<div style="color:#f44">ERROR: ${err.message}</div>`; }
+);
+
+// ─── Orbit controls (manual) ──────────────────────────────────────────────────
+let rotX = 0.35, rotY = 0.4;
+let camRadius = 8;
+const camTarget = new THREE.Vector3(0, 1.5, 0);
+let autoRotate = false;
+let isDrag = false, prevMX = 0, prevMY = 0;
+
+renderer.domElement.addEventListener('mousedown', e => {
+  if (pickMode) return;
+  isDrag = true; prevMX = e.clientX; prevMY = e.clientY;
+});
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+window.addEventListener('mouseup', e => { isDrag = false; });
+window.addEventListener('mousemove', e => {
+  if (!isDrag) return;
+  rotY += (e.clientX - prevMX) * 0.006;
+  rotX = Math.max(-1.2, Math.min(1.2, rotX + (e.clientY - prevMY) * 0.006));
+  prevMX = e.clientX; prevMY = e.clientY;
+});
+renderer.domElement.addEventListener('wheel', e => {
+  camRadius = Math.max(2, Math.min(20, camRadius + e.deltaY * 0.008));
+}, { passive: true });
+renderer.domElement.addEventListener('click', onPickClick);
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'e' || e.key === 'E') window.toggleDoor();
+  if (e.key === 'p' || e.key === 'P') window.startPick();
+  if (e.key === 'r' || e.key === 'R') window.resetCamera();
+});
+
+window.resetCamera = () => { rotX = 0.35; rotY = 0.4; camRadius = 8; };
+window.toggleAutoRotate = () => {
+  autoRotate = !autoRotate;
+  document.getElementById('btn-auto').classList.toggle('active', autoRotate);
+};
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ─── Render loop ─────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  const elapsed = clock.elapsedTime;
+
+  // Smooth door animation
+  if (Math.abs(door.t - door.target) > 0.001) {
+    door.t += (door.target - door.t) * Math.min(1, door.speed * dt);
+    updateDoorPose(door.t);
+  }
+
+  // Camera orbit
+  if (autoRotate) rotY += dt * 0.35;
+  camera.position.x = camTarget.x + Math.sin(rotY) * Math.cos(rotX) * camRadius;
+  camera.position.y = camTarget.y + Math.sin(rotX) * camRadius;
+  camera.position.z = camTarget.z + Math.cos(rotY) * Math.cos(rotX) * camRadius;
+  camera.lookAt(camTarget);
+
+  // Ambient glow pulse
+  glowPt.intensity = 1.2 + Math.sin(elapsed * 2.2) * 0.4;
+
+  // Door glow flicker when moving
+  if (Math.abs(door.t - door.target) > 0.05) {
+    door.edgeMats?.forEach(m => { m.emissiveIntensity = 2 + Math.sin(elapsed * 30) * 1.5; });
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+  </script>
+</body>
+</html>

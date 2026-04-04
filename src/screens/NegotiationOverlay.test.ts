@@ -27,11 +27,11 @@ describe('BossDialog tree', () => {
     getPhase(4)!.choices.forEach(c => expect(c.nextPhase).toBe(-1));
   });
 
-  it('SUCCESS_THRESHOLD is 50', () => {
-    expect(SUCCESS_THRESHOLD).toBe(50);
+  it('SUCCESS_THRESHOLD is 80', () => {
+    expect(SUCCESS_THRESHOLD).toBe(80);
   });
 
-  it('best path (1→2→3→4) totals >= 50 points', () => {
+  it('best path (1→2→3→4) totals >= 80 points', () => {
     const best =
       15 +  // "Кто ты?" Phase 1
       30 +  // "Охота на невинных" Phase 2
@@ -80,7 +80,7 @@ describe('NegotiationOverlay', () => {
     vi.advanceTimersByTime(1500);
 
     const textEl = document.getElementById('vk-neg-boss-text');
-    expect(textEl?.textContent).toContain('Асгард-Прайм');
+    expect(textEl?.textContent).toContain('старого мира');
     expect(textEl?.textContent).toContain('Пустоту');
   });
 
@@ -89,7 +89,7 @@ describe('NegotiationOverlay', () => {
   it('"Никогда!" skips Phase 2, goes directly to Phase 3 debate', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
-    btn('Никогда! Цитадель Асгард-Прайм устоит!')?.click();
+    btn('Никогда! Цитадель устоит!')?.click();
     vi.advanceTimersByTime(1500);
 
     const textEl = document.getElementById('vk-neg-boss-text');
@@ -136,9 +136,9 @@ describe('NegotiationOverlay', () => {
     btn('Потому что свобода выбора важнее совершенства.')?.click();
     vi.advanceTimersByTime(1500);
 
-    // Phase 4 (+20) → end (total = 100)
+    // Phase 4 (+20) → outcome screen (1500ms) → close (2500ms)
     btn('Присоединись к нам. Помоги защитить Цитадель.')?.click();
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(1500 + 2500);
 
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onFailure).not.toHaveBeenCalled();
@@ -151,16 +151,16 @@ describe('NegotiationOverlay', () => {
     overlay.mount(document.body, { onSuccess, onFailure });
 
     // Phase 1 (clamped to 0) → Phase 3
-    btn('Никогда! Цитадель Асгард-Прайм устоит!')?.click();
+    btn('Никогда! Цитадель устоит!')?.click();
     vi.advanceTimersByTime(1500);
 
     // Phase 3 (clamped to 0) → Phase 4
     btn('Код Предков — не твой. Никогда не был твоим.')?.click();
     vi.advanceTimersByTime(1500);
 
-    // Phase 4 (+5) → end (total = 5 < 50)
+    // Phase 4 (+5) → outcome screen (1500ms) → close (2500ms), total=5 < 80
     btn('Ты должен ответить за свои действия.')?.click();
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(1500 + 2500);
 
     expect(onFailure).toHaveBeenCalledTimes(1);
     expect(onSuccess).not.toHaveBeenCalled();

@@ -11,11 +11,11 @@ const WAVE_TABLE: Array<{
   reinforcements?: Record<string, number>;
   boss?: Record<string, number>;
 }> = [
-  { enemies: { 'light-enemy': 20, 'ranged-enemy': 3 } },                                                                                              // wave 1  (20 boits + 3 lasers ~13%)
-  { enemies: { 'light-enemy': 25, 'ranged-enemy': 6 }, reinforcements: { 'heavy-ally': 1 } },                                                        // wave 2  (25 boits + 6 lasers ~19%)
-  { enemies: { 'light-enemy': 20, 'heavy-enemy': 5, 'ranged-enemy': 6 }, reinforcements: { 'heavy-ally': 1, 'light-ally': 1 } },                     // wave 3  (20+5 boits + 6 lasers ~19%)
-  { enemies: { 'light-enemy': 20, 'heavy-enemy': 8, 'ranged-enemy': 7 }, reinforcements: { 'heavy-ally': 2 } },                                      // wave 4  (28 boits + 7 lasers ~20%)
-  { enemies: { 'light-enemy': 15, 'heavy-enemy': 10, 'ranged-enemy': 9 }, reinforcements: { 'heavy-ally': 2 }, boss: { 'boss-enemy': 1 } },          // wave 5+ (25 boits + 9 lasers ~26%)
+  { enemies: { 'light-enemy': 12, 'ranged-enemy': 2 } },                                                                                              // wave 1
+  { enemies: { 'light-enemy': 14, 'ranged-enemy': 4 }, reinforcements: { 'heavy-ally': 1 } },                                                        // wave 2
+  { enemies: { 'light-enemy': 12, 'heavy-enemy': 4, 'ranged-enemy': 4 }, reinforcements: { 'heavy-ally': 1, 'light-ally': 1 } },                     // wave 3
+  { enemies: { 'light-enemy': 12, 'heavy-enemy': 6, 'ranged-enemy': 5 }, reinforcements: { 'heavy-ally': 2 } },                                      // wave 4
+  { enemies: { 'light-enemy': 10, 'heavy-enemy': 7, 'ranged-enemy': 6 }, reinforcements: { 'heavy-ally': 2 }, boss: { 'boss-enemy': 1 } },           // wave 5+
 ];
 
 /** Seconds between waves per wave number (post-launch). */

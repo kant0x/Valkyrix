@@ -62,8 +62,10 @@ function makeState(units: Unit[], pathNodes: PathNode[]): GameState {
     playerBaseHp: 300,
     playerBaseMaxHp: 300,
     resources: 100,
+    crystals: 0,
     nextId: 2,
     pathNodes,
+    allyPathNodes: [...pathNodes].reverse(),
     enemyLaneOffsets: [0],
   };
 }
@@ -112,6 +114,36 @@ describe('UnitSystem', () => {
     system.update(1, state);
 
     expect(state.units[0].state).toBe('attacking-base');
+    expect(state.units[0].wx).toBeCloseTo(58);
+    expect(state.units[0].wy).toBeCloseTo(0);
+  });
+
+  it('compresses lane spread near the citadel so enemies do not attack from far off to the side', () => {
+    const path = makePathNodes(2);
+    const unit = makeUnit({ pathT: 0.9, pathIndex: 0, laneOffset: 30 });
+    const state = makeState([unit], path);
+
+    system.update(1, state);
+
+    expect(state.units[0].state).toBe('attacking-base');
+    expect(state.units[0].wx).toBeCloseTo(58);
+    expect(Math.abs(state.units[0].wy)).toBeLessThan(2);
+  });
+
+  it('uses a meaningful approach vector when the final citadel segment is too short', () => {
+    const path: PathNode[] = [
+      { wx: 0, wy: 0 },
+      { wx: 90, wy: 0 },
+      { wx: 100, wy: 0 },
+    ];
+    const unit = makeUnit({ pathT: 0.95, pathIndex: 1, wx: 99, wy: 0 });
+    const state = makeState([unit], path);
+
+    system.update(1, state);
+
+    expect(state.units[0].state).toBe('attacking-base');
+    expect(state.units[0].wx).toBeCloseTo(58);
+    expect(state.units[0].wy).toBeCloseTo(0);
   });
 
   it('does NOT advance units in fighting or attacking-base states', () => {
@@ -222,5 +254,26 @@ describe('UnitSystem', () => {
     // ...but with a softer, not-perfectly-aligned lateral spread.
     expect(new Set(ys.map((y) => Math.round(y))).size).toBeGreaterThan(1);
     expect(ys.every((y) => y > 84 && y < 116)).toBe(true);
+  });
+
+  it('moves allies from allyPathNodes when the citadel sits above the road entry', () => {
+    const path: PathNode[] = [
+      { wx: 0, wy: 0 },
+      { wx: 100, wy: 0 },
+      { wx: 200, wy: 0 },
+    ];
+    const unit = makeUnit({ faction: 'ally', pathT: 0, pathIndex: 0, wx: 220, wy: -40 });
+    const state = makeState([unit], path);
+    state.allyPathNodes = [
+      { wx: 220, wy: -40 },
+      { wx: 200, wy: 0 },
+      { wx: 100, wy: 0 },
+      { wx: 0, wy: 0 },
+    ];
+
+    system.update(1, state);
+
+    expect(state.units[0].wx).toBeLessThan(220);
+    expect(state.units[0].wy).toBeGreaterThan(-40);
   });
 });

@@ -35,9 +35,9 @@ export const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com';
 
 // Use a type-only alias to avoid importing @solana/web3.js at module load time
 // (bundle size: ~400 KB gzipped — only load when player presses Play)
-const CHAIN_TIMEOUT_MS = 5000;
+const CHAIN_TIMEOUT_MS = 12000;
 
-type SessionConnection = Pick<ConnectionMagicRouter, 'getSlot'>;
+type SessionConnection = Pick<ConnectionMagicRouter, 'getSlot' | 'getLatestBlockhash'>;
 
 export class ChainUnavailableError extends Error {
   constructor() {
@@ -50,6 +50,15 @@ async function createDefaultConnection(): Promise<SessionConnection> {
   return new ConnectionMagicRouter(MAGIC_ROUTER_DEVNET, {
     wsEndpoint: MAGIC_ROUTER_WS_DEVNET,
   });
+}
+
+async function probeConnection(connection: SessionConnection): Promise<void> {
+  try {
+    await connection.getSlot();
+    return;
+  } catch {
+    await connection.getLatestBlockhash();
+  }
 }
 
 export class SessionLayer {
@@ -72,7 +81,7 @@ export class SessionLayer {
     this.connection = await this.createConnection();
     try {
       await Promise.race([
-        this.connection.getSlot(),
+        probeConnection(this.connection),
         new Promise<never>((_, reject) => {
           setTimeout(() => reject(new ChainUnavailableError()), CHAIN_TIMEOUT_MS);
         }),
@@ -81,6 +90,10 @@ export class SessionLayer {
       this.connection = null;
       throw new ChainUnavailableError();
     }
+  }
+
+  disconnect(): void {
+    this.connection = null;
   }
 
   /**
