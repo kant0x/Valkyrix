@@ -12,6 +12,13 @@ The project integrates MagicBlock Ephemeral Rollup through `@magicblock-labs/eph
 - `src/blockchain/LeaderboardService.ts` submits final scores to the leaderboard.
 - `anchor/programs/valkyrix_ledger/src/lib.rs` contains the Anchor program used by the game ledger.
 
+## Smart Contract and MagicBlock folders
+
+- `anchor/programs/valkyrix_ledger/` smart contract source code for the Valkyrix on-chain ledger
+- `src/blockchain/` MagicBlock transaction flow, ledger client, session writes, and leaderboard submission
+- `src/session/` MagicBlock connection and Ephemeral Rollup session layer
+- `scripts/` helper scripts for contract deploy and SOAR / leaderboard initialization
+
 ## Project structure
 
 - `src/game/` core gameplay systems
