@@ -23,8 +23,5 @@
     "@magicblock-labs/ephemeral-rollups-sdk": "^0.10.1",
     "@magicblock-labs/soar-sdk": "^0.1.23",
     "@solana/web3.js": "^1.98.4"
-  },
-  "optionalDependencies": {
-    "arweave": "1.15.7"
   }
 }
